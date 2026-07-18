@@ -38,6 +38,8 @@
   "devDependencies": {
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "firebase-admin": "^14.2.0",
+    "firebase-tools": "^15.24.0"
   }
 }

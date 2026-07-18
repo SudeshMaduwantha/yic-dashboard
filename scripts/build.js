@@ -36,6 +36,17 @@ async function build() {
   });
   fs.copyFileSync(path.join(shared, 'lookup.html'), path.join(webDir, 'lookup.html'));
 
+  // Student self-service portal — web/ only, same reasoning as lookup above.
+  await esbuild.build({
+    entryPoints: [path.join(shared, 'portal.js')],
+    bundle: true,
+    format: 'iife',
+    outfile: path.join(webDir, 'portal.bundle.js'),
+    minify: false,
+    logLevel: 'info',
+  });
+  fs.copyFileSync(path.join(shared, 'portal.html'), path.join(webDir, 'portal.html'));
+
   console.log('Build complete: renderer/ and web/ are up to date.');
 }
 

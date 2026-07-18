@@ -18,6 +18,15 @@ service cloud.firestore {
     function isAdministrator() { return isSignedIn() && myRole() == 'administrator'; }
     function isCoach() { return isSignedIn() && myRole() == 'coach'; }
 
+    // Student self-service portal: a verified session proves the caller supplied a
+    // valid Student ID + PIN pair for `code` at some point (see /student_sessions
+    // below). Anonymous Auth only, never mixed with the staff `users` collection.
+    function isVerifiedStudent(code) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/student_sessions/$(request.auth.uid))
+        && get(/databases/$(database)/documents/student_sessions/$(request.auth.uid)).data.studentCode == code;
+    }
+
     function superAdminClaimed() {
       return exists(/databases/$(database)/documents/meta/access)
         && get(/databases/$(database)/documents/meta/access).data.superAdminClaimed == true;
@@ -82,6 +91,35 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow write: if isSuperAdmin() || isAdministrator();
+    }
+
+    // Student portal session, keyed by the (Anonymous Auth) uid that created it.
+    // Created only after the client proves it knows a valid Student ID + PIN pair —
+    // the `create` rule independently re-checks that against /public_lookup itself,
+    // so a forged session doc is rejected server-side regardless of client claims.
+    // Sessions are create-once / delete-on-logout; never mutated in place.
+    match /student_sessions/{uid} {
+      allow get: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.studentCode is string
+        && request.resource.data.pin is string
+        && exists(/databases/$(database)/documents/public_lookup/$(request.resource.data.studentCode + '::' + request.resource.data.pin));
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+      allow update: if false;
+    }
+
+    // Self-service editable profile fields, separate from /students/{id} on purpose:
+    // one person can have multiple /students docs (one per sport, sharing the same
+    // studentCode), and this keeps the student-writable surface narrow instead of
+    // fanning out edits across N docs or touching attendance/fee-adjacent data.
+    match /student_profiles/{code} {
+      allow read: if isSuperAdmin() || isAdministrator() || isCoach() || isVerifiedStudent(code);
+      allow create, update: if isVerifiedStudent(code)
+        && request.resource.data.keys().hasOnly(['phone', 'emergencyContact', 'photoUrl', 'photoUpdatedAt', 'updatedAt'])
+        && request.resource.data.phone is string
+        && request.resource.data.emergencyContact is string;
+      allow write: if isSuperAdmin() || isAdministrator();
+      allow delete: if isSuperAdmin();
     }
   }
 }
