@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    // A coach can be assigned to more than one sport (stored as a "sports" array).
+    // Falls back to the older single-value "sport" field so accounts created before
+    // this existed keep working without a data migration.
+    function mySports() {
+      let data = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return data.sports != null ? data.sports : (data.sport != null ? [data.sport] : []);
+    }
+    function isSuperAdmin() { return isSignedIn() && myRole() == 'super_admin'; }
+    function isAdministrator() { return isSignedIn() && myRole() == 'administrator'; }
+    function isCoach() { return isSignedIn() && myRole() == 'coach'; }
+
+    function superAdminClaimed() {
+      return exists(/databases/$(database)/documents/meta/access)
+        && get(/databases/$(database)/documents/meta/access).data.superAdminClaimed == true;
+    }
+
+    // One-time bootstrap flag: flips true the moment the first Super Admin claims their role.
+    match /meta/access {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && !superAdminClaimed() && request.resource.data.superAdminClaimed == true;
+    }
+
+    // Staff accounts and their role/sport assignment.
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+      // Super Admin creates any account. The very first account may self-claim super_admin
+      // once, before anyone has claimed it (see meta/access above).
+      allow create: if isSuperAdmin()
+        || (isSignedIn() && request.auth.uid == uid
+            && request.resource.data.role == 'super_admin'
+            && !superAdminClaimed());
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Student roster + attendance. Coaches are scoped to their assigned sport(s) — the
+    // app always issues a where('sport','in', mySports()) query for coach logins so
+    // this rule can be verified against the query itself, not just individual docs.
+    // Administrators can update (e.g. set a Student ID) but not create/delete students.
+    match /students/{id} {
+      allow read: if isSuperAdmin() || isAdministrator()
+        || (isCoach() && resource.data.sport in mySports());
+      allow create: if isSuperAdmin() || (isCoach() && request.resource.data.sport in mySports());
+      allow update: if isSuperAdmin() || isAdministrator()
+        || (isCoach() && resource.data.sport in mySports() && request.resource.data.sport in mySports());
+      allow delete: if isSuperAdmin();
+    }
+
+    // Fee ledger. Administrators can fully manage it. Coaches can only read records for
+    // their own sport(s) (the app displays paid/unpaid status to them, never the amount).
+    match /fees/{id} {
+      allow read: if isSuperAdmin() || isAdministrator()
+        || (isCoach() && resource.data.sport in mySports());
+      allow write: if isSuperAdmin() || isAdministrator();
+    }
+
+    // Coach directory, one doc per sport. Any signed-in staff can see who runs a
+    // sport; only Super Admin assigns/edits it.
+    match /sport_coaches/{sport} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Per-person metadata (Student ID -> PIN) used for the public parent lookup.
+    match /student_meta/{code} {
+      allow read, write: if isSuperAdmin() || isAdministrator();
+    }
+
+    // Denormalized public snapshot, keyed by "<studentCode>::<pin>". Knowing the
+    // exact ID *is* the credential — get (exact match) is public, list (browsing/
+    // enumeration) is always blocked, so records can't be discovered without both
+    // pieces of info.
+    match /public_lookup/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isSuperAdmin() || isAdministrator();
+    }
+  }
+}

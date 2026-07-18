@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.google.com;" />
+  <title>YIC Sport School — Student Lookup</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="login-screen">
+    <div id="lookup-form-card" class="login-card">
+      <img class="brand-mark login-mark" src="assets/logos/school-logo.png" alt="YIC Sport School logo" />
+      <h1>Check attendance &amp; fees</h1>
+      <p class="login-sub">Enter your child's Student ID and PIN (given to you by the school).</p>
+      <form id="lookup-form">
+        <div class="filter-group">
+          <label for="lookup-id">Student ID</label>
+          <input id="lookup-id" type="text" required autocomplete="off" />
+        </div>
+        <div class="filter-group">
+          <label for="lookup-pin">PIN</label>
+          <input id="lookup-pin" type="text" required autocomplete="off" />
+        </div>
+        <p id="lookup-error" class="login-error"></p>
+        <button type="submit" class="primary-btn login-btn">Look up</button>
+      </form>
+    </div>
+
+    <div id="lookup-result-card" class="login-card hidden" style="max-width: 480px;">
+      <h1 id="lookup-result-title">Student</h1>
+      <div id="lookup-result-sports" class="student-summary-sports"></div>
+      <div id="lookup-result-fees" class="student-summary-fees"></div>
+      <div class="table-scroll">
+        <table id="lookup-result-fee-table" class="hidden">
+          <thead><tr><th>Sport</th><th>Month</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody id="lookup-result-fee-body"></tbody>
+        </table>
+      </div>
+      <p id="lookup-result-updated" class="login-sub"></p>
+      <button type="button" id="lookup-back-btn" class="connect-btn">Look up another student</button>
+    </div>
+  </div>
+
+  <script src="lookup.bundle.js"></script>
+</body>
+</html>

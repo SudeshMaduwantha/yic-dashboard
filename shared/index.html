@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.google.com;" />
+  <title>YIC Sport School — Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ================= LOGIN ================= -->
+  <div id="login-screen" class="login-screen">
+    <form id="login-form" class="login-card">
+      <img class="brand-mark login-mark" src="assets/logos/school-logo.png" alt="YIC Sport School logo" />
+      <h1>YIC Sport School</h1>
+      <p class="login-sub">Sign in to view the dashboard</p>
+      <div class="filter-group">
+        <label for="login-email">Email</label>
+        <input id="login-email" type="email" required autocomplete="username" />
+      </div>
+      <div class="filter-group">
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" required autocomplete="current-password" />
+      </div>
+      <p id="login-error" class="login-error"></p>
+      <button type="submit" class="primary-btn login-btn">Sign in</button>
+    </form>
+  </div>
+
+  <!-- ================= BOOTSTRAP (first-ever login only) ================= -->
+  <div id="bootstrap-screen" class="login-screen hidden">
+    <div class="login-card">
+      <img class="brand-mark login-mark" src="assets/logos/school-logo.png" alt="YIC Sport School logo" />
+      <h1>Set up Super Admin</h1>
+      <p class="login-sub">No account has access yet. Claim Super Admin for this login — you'll be able to create Administrator and Coach logins for everyone else afterward.</p>
+      <p id="bootstrap-error" class="login-error"></p>
+      <button id="bootstrap-claim-btn" type="button" class="primary-btn login-btn">Claim Super Admin</button>
+    </div>
+  </div>
+
+  <!-- ================= APP ================= -->
+  <div id="app-shell" class="app hidden">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="assets/logos/school-logo.png" alt="YIC Sport School logo" />
+        <div>
+          <h1>YIC Sport School</h1>
+          <p>Live dashboard</p>
+        </div>
+      </div>
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="tab-btn" data-tab="attendance">Attendance</button>
+        <button class="tab-btn" data-tab="fees">Fees Ledger</button>
+      </nav>
+      <button id="import-excel-btn" class="connect-btn hidden" title="One-time import of historical Excel data">📥 Import from Excel</button>
+      <button id="add-staff-btn" class="connect-btn" title="Create another staff login">👤 Add Staff</button>
+      <button id="signout-btn" class="connect-btn" title="Sign out">Sign out</button>
+    </header>
+
+    <div id="add-staff-modal" class="modal-overlay hidden">
+      <form id="add-staff-form" class="login-card">
+        <h1>Add a staff login</h1>
+        <p class="login-sub">They'll use this email + password to sign in.</p>
+        <div class="filter-group">
+          <label for="staff-email">Email</label>
+          <input id="staff-email" type="email" required />
+        </div>
+        <div class="filter-group">
+          <label for="staff-password">Password</label>
+          <input id="staff-password" type="password" required minlength="6" />
+        </div>
+        <div class="filter-group">
+          <label for="staff-role">Role</label>
+          <select id="staff-role">
+            <option value="super_admin">Super Admin — full access</option>
+            <option value="administrator">Administrator — view fees &amp; attendance only</option>
+            <option value="coach">Coach — mark attendance for their sport(s)</option>
+          </select>
+        </div>
+        <div class="filter-group hidden" id="staff-sport-group">
+          <label>Sport(s)</label>
+          <div id="staff-sport-checks" class="reg-sport-checks"></div>
+        </div>
+        <p id="add-staff-error" class="login-error"></p>
+        <p id="add-staff-success" class="login-success"></p>
+        <div class="modal-actions">
+          <button type="button" id="add-staff-cancel" class="connect-btn">Cancel</button>
+          <button type="submit" class="primary-btn">Create account</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="import-year-modal" class="modal-overlay hidden">
+      <form id="import-year-form" class="login-card">
+        <h1>Import from Excel</h1>
+        <p class="login-sub">Which year is this attendance data for?</p>
+        <div class="filter-group">
+          <label for="import-year">Year</label>
+          <input id="import-year" type="number" min="2000" max="2100" required />
+        </div>
+        <p id="import-error" class="login-error"></p>
+        <p id="import-status" class="login-success"></p>
+        <div class="modal-actions">
+          <button type="button" id="import-year-cancel" class="connect-btn">Cancel</button>
+          <button type="submit" class="primary-btn">Import</button>
+        </div>
+      </form>
+    </div>
+
+    <main>
+      <!-- ================= DASHBOARD TAB ================= -->
+      <section id="tab-dashboard" class="tab-panel active">
+        <section class="sport-strip" id="sport-strip"></section>
+
+        <section class="panel coaches-panel">
+          <h2>Sport Coaches</h2>
+          <div class="table-scroll">
+            <table id="coaches-table">
+              <thead><tr><th>Sport</th><th>Coach Name</th><th>Phone</th><th></th></tr></thead>
+              <tbody id="coaches-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="stats-grid" id="stats-grid"></section>
+
+        <section class="filters">
+          <div class="filter-group">
+            <label for="sport-filter">Sport</label>
+            <select id="sport-filter"></select>
+          </div>
+          <div class="filter-group">
+            <label for="grade-filter">Grade</label>
+            <select id="grade-filter"><option value="all">All grades</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="month-filter">Month</label>
+            <select id="month-filter"><option value="all">All months</option></select>
+          </div>
+          <div class="filter-group">
+            <label for="student-filter">Student</label>
+            <select id="student-filter"><option value="">Pick a student…</option></select>
+          </div>
+          <div class="filter-group search-group">
+            <label for="search-input">Search</label>
+            <input id="search-input" type="text" placeholder="Search student name…" />
+          </div>
+        </section>
+
+        <section class="panel student-summary-panel hidden" id="student-summary-panel">
+          <h2 id="student-summary-title">Student</h2>
+          <p id="student-summary-contact" class="student-summary-contact"></p>
+          <div id="student-summary-sports" class="student-summary-sports"></div>
+          <div id="student-summary-fees" class="student-summary-fees"></div>
+
+          <div class="table-scroll">
+            <table id="student-summary-fee-table" class="hidden">
+              <thead><tr><th>Sport</th><th>Month</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody id="student-summary-fee-body"></tbody>
+            </table>
+          </div>
+
+          <div id="student-manage-section" class="student-manage-section hidden">
+            <h3>Manage</h3>
+            <div class="filters">
+              <div class="filter-group">
+                <label for="student-manage-name">Name</label>
+                <input id="student-manage-name" type="text" />
+              </div>
+              <div class="filter-group">
+                <label for="student-manage-grade">Grade</label>
+                <input id="student-manage-grade" type="text" />
+              </div>
+              <div class="filter-group">
+                <label for="student-manage-phone">Mobile number</label>
+                <input id="student-manage-phone" type="tel" />
+              </div>
+              <div class="filter-group">
+                <label for="student-manage-id">Student ID</label>
+                <input id="student-manage-id" type="text" placeholder="e.g. YIC-0001" />
+              </div>
+              <div class="filter-group">
+                <label for="student-manage-pin">Public PIN</label>
+                <input id="student-manage-pin" type="text" placeholder="e.g. 4821" />
+              </div>
+            </div>
+            <div class="modal-actions" style="justify-content: flex-start;">
+              <button type="button" id="student-manage-save" class="connect-btn">Save changes</button>
+              <button type="button" id="student-manage-sync" class="primary-btn">🔄 Sync public profile</button>
+            </div>
+            <p id="student-manage-status" class="login-success"></p>
+            <p id="student-manage-error" class="login-error"></p>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="panel roster-panel">
+            <h2>Roster</h2>
+            <div id="roster-cards" class="roster-cards"></div>
+          </div>
+          <div class="panel chart-panel">
+            <h2>Attendance by sport</h2>
+            <canvas id="attendance-chart" height="220"></canvas>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <h2>Attendance table</h2>
+          <div class="table-scroll">
+            <table id="attendance-table">
+              <thead id="attendance-table-head"></thead>
+              <tbody id="attendance-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <!-- ================= ATTENDANCE TAB ================= -->
+      <section id="tab-attendance" class="tab-panel">
+        <section class="panel">
+          <h2>Register a student</h2>
+          <form id="reg-form" class="fee-form">
+            <div class="filter-group">
+              <label for="reg-name">Student name</label>
+              <input id="reg-name" type="text" required />
+            </div>
+            <div class="filter-group">
+              <label for="reg-grade">Grade</label>
+              <input id="reg-grade" type="text" />
+            </div>
+            <div class="filter-group">
+              <label for="reg-student-id">Student ID</label>
+              <input id="reg-student-id" type="text" placeholder="optional" />
+            </div>
+            <div class="filter-group">
+              <label for="reg-phone">Mobile number</label>
+              <input id="reg-phone" type="tel" placeholder="optional" />
+            </div>
+            <div class="filter-group reg-sports-group">
+              <label>Sport(s)</label>
+              <div id="reg-sport-checks" class="reg-sport-checks"></div>
+            </div>
+            <button type="submit" class="primary-btn">Register student</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Mark attendance</h2>
+          <div class="filters">
+            <div class="filter-group">
+              <label for="att-sport">Sport</label>
+              <select id="att-sport"></select>
+            </div>
+            <div class="filter-group">
+              <label for="att-month">Month</label>
+              <input id="att-month" type="month" />
+            </div>
+            <div class="filter-group">
+              <label for="att-week">Week</label>
+              <select id="att-week">
+                <option value="1st">1st Week</option>
+                <option value="2nd">2nd Week</option>
+                <option value="3rd">3rd Week</option>
+                <option value="4th">4th Week</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="att-list" class="att-list"></div>
+
+          <div class="att-save-row">
+            <span id="att-status" class="att-status"></span>
+            <button id="att-save-btn" type="button" class="primary-btn">Save Attendance</button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ================= FEES TAB ================= -->
+      <section id="tab-fees" class="tab-panel">
+        <section class="panel fees-form-panel" id="fees-form-panel">
+          <h2>Add fee record</h2>
+          <form id="fee-form" class="fee-form">
+            <div class="filter-group">
+              <label for="fee-sport">Sport</label>
+              <select id="fee-sport" required></select>
+            </div>
+            <div class="filter-group">
+              <label for="fee-student">Student</label>
+              <select id="fee-student" required></select>
+            </div>
+            <div class="filter-group">
+              <label for="fee-amount">Amount (Rs.) — per month</label>
+              <input id="fee-amount" type="number" min="0" step="1" required />
+            </div>
+            <div class="filter-group">
+              <label for="fee-month">Month</label>
+              <input id="fee-month" type="month" required />
+            </div>
+            <div class="filter-group">
+              <label for="fee-month-to">To month <span class="fee-month-to-hint">(optional — paying several months at once)</span></label>
+              <input id="fee-month-to" type="month" />
+            </div>
+            <div class="filter-group">
+              <label for="fee-status">Status</label>
+              <select id="fee-status">
+                <option value="paid">Paid</option>
+                <option value="due">Due</option>
+              </select>
+            </div>
+            <div class="modal-actions">
+              <button type="button" id="fee-form-cancel" class="connect-btn hidden">Cancel edit</button>
+              <button type="submit" id="fee-form-submit" class="primary-btn">Add record</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Fee records</h2>
+          <div class="stats-grid" id="fees-stats"></div>
+          <div class="filters">
+            <div class="filter-group">
+              <label for="fee-filter-sport">Sport</label>
+              <select id="fee-filter-sport"><option value="all">All sports</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="fee-filter-student">Student</label>
+              <select id="fee-filter-student"><option value="all">All students</option></select>
+            </div>
+            <div class="filter-group">
+              <label for="fee-filter-status">Status</label>
+              <select id="fee-filter-status">
+                <option value="all">All</option>
+                <option value="paid">Paid</option>
+                <option value="due">Due</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="fees-table">
+              <thead>
+                <tr><th>Name</th><th>Sport</th><th>Month</th><th>Amount</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody id="fees-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.bundle.js"></script>
+</body>
+</html>

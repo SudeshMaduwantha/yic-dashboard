@@ -1,0 +1,43 @@
+{
+  "name": "yic-dashboard",
+  "version": "1.0.0",
+  "description": "YIC Sport School attendance & fees dashboard",
+  "main": "main.js",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder"
+  },
+  "author": "",
+  "license": "ISC",
+  "build": {
+    "appId": "com.yic.sportschool.dashboard",
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*"
+    ],
+    "publish": {
+      "provider": "generic",
+      "url": "https://yic-sport-school.web.app/updates/"
+    }
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "electron-updater": "^6.8.9",
+    "exceljs": "^4.4.0",
+    "firebase": "^12.16.0"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1"
+  }
+}
