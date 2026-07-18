@@ -6,7 +6,6 @@ import {
 import {
   getFirestore, doc, getDoc, setDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL, connectStorageEmulator } from 'firebase/storage';
 import { connectFirestoreEmulator } from 'firebase/firestore';
 import { connectAuthEmulator } from 'firebase/auth';
 import { firebaseConfig } from './firebase-config.js';
@@ -19,7 +18,6 @@ import { el, escapeHtml } from './utils.js';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const storage = getStorage(app);
 
 // Local-only: point at the Firebase Emulator Suite instead of production when this
 // page is served from localhost (see `firebase emulators:start`). Never triggers in
@@ -27,11 +25,35 @@ const storage = getStorage(app);
 if (typeof location !== 'undefined' && location.hostname === 'localhost') {
   connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, 'localhost', 8080);
-  connectStorageEmulator(storage, 'localhost', 9199);
 }
 
-const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
-const ALLOWED_PHOTO_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+// Profile photos are stored as a small base64 data: URI directly in Firestore, not
+// Firebase Storage — this project is on the free Spark plan and Storage requires
+// the paid Blaze plan. Resized/compressed client-side to stay well under
+// Firestore's 1MiB document limit; firestore.rules enforces the size server-side.
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // source file, before resizing
+const ALLOWED_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const PHOTO_MAX_DIMENSION = 320;
+const PHOTO_JPEG_QUALITY = 0.72;
+
+function resizePhotoToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, PHOTO_MAX_DIMENSION / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(img.src);
+      resolve(canvas.toDataURL('image/jpeg', PHOTO_JPEG_QUALITY));
+    };
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Could not read image')); };
+    img.src = URL.createObjectURL(file);
+  });
+}
 
 let currentCode = null;
 let dashboardActive = false;
@@ -184,22 +206,19 @@ el('portal-photo-upload-btn').addEventListener('click', async () => {
     errorEl.textContent = 'Choose a photo first.';
     return;
   }
-  const ext = ALLOWED_PHOTO_TYPES[file.type];
-  if (!ext) {
+  if (!ALLOWED_PHOTO_TYPES.includes(file.type)) {
     errorEl.textContent = 'Photo must be a JPEG, PNG, or WEBP image.';
     return;
   }
   if (file.size > MAX_PHOTO_BYTES) {
-    errorEl.textContent = 'Photo must be smaller than 5MB.';
+    errorEl.textContent = 'Photo must be smaller than 8MB.';
     return;
   }
   const btn = el('portal-photo-upload-btn');
   btn.disabled = true;
   btn.textContent = 'Uploading…';
   try {
-    const photoRef = ref(storage, `student_photos/${currentCode}/profile.${ext}`);
-    await uploadBytes(photoRef, file, { contentType: file.type });
-    const photoUrl = await getDownloadURL(photoRef);
+    const photoUrl = await resizePhotoToDataUrl(file);
     await setDoc(doc(db, 'student_profiles', currentCode), {
       photoUrl,
       photoUpdatedAt: serverTimestamp(),

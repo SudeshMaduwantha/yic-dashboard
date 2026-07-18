@@ -112,12 +112,22 @@ service cloud.firestore {
     // one person can have multiple /students docs (one per sport, sharing the same
     // studentCode), and this keeps the student-writable surface narrow instead of
     // fanning out edits across N docs or touching attendance/fee-adjacent data.
+    //
+    // photoUrl holds a small base64 data: URI, not a Storage download URL — this
+    // project is on the Spark (free) plan and Storage requires Blaze, so the profile
+    // photo is stored directly in Firestore instead. The size check keeps it well
+    // under Firestore's 1MiB document limit (client resizes to a small JPEG first;
+    // this is the actual server-side enforcement, not just client-side trust).
+    // Each field is optional-but-type-checked, not required — a student can upload a
+    // photo before ever saving their phone/emergency contact (or vice versa); the two
+    // forms on the portal page save independently via separate merge writes.
     match /student_profiles/{code} {
       allow read: if isSuperAdmin() || isAdministrator() || isCoach() || isVerifiedStudent(code);
       allow create, update: if isVerifiedStudent(code)
         && request.resource.data.keys().hasOnly(['phone', 'emergencyContact', 'photoUrl', 'photoUpdatedAt', 'updatedAt'])
-        && request.resource.data.phone is string
-        && request.resource.data.emergencyContact is string;
+        && (!('phone' in request.resource.data) || request.resource.data.phone is string)
+        && (!('emergencyContact' in request.resource.data) || request.resource.data.emergencyContact is string)
+        && (!('photoUrl' in request.resource.data) || request.resource.data.photoUrl.size() < 700000);
       allow write: if isSuperAdmin() || isAdministrator();
       allow delete: if isSuperAdmin();
     }
