@@ -49,8 +49,7 @@
     "publish": {
       "provider": "github",
       "owner": "SudeshMaduwantha",
-      "repo": "yic-dashboard",
-      "releaseType": "release"
+      "repo": "yic-dashboard"
     }
   },
   "dependencies": {

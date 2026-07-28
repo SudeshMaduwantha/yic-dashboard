@@ -190,6 +190,20 @@ export async function mergeStudents(keeperId, duplicateIds, keeperUpdates) {
   await batch.commit();
 }
 
+// Drops ONE sport registration for a multi-sport student, not the whole person
+// — deletes just that /students doc and that sport's fee records. Leaves
+// student_meta/public_lookup alone since the person's other sport
+// registrations still share the same Student ID + PIN. For a student with
+// only one sport, use deleteStudent() instead so the meta/lookup docs get
+// cleaned up too.
+export async function removeStudentSport(studentId) {
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'students', studentId));
+  const feeSnap = await getDocs(query(collection(db, 'fees'), where('studentId', '==', studentId)));
+  feeSnap.forEach((feeDoc) => batch.delete(feeDoc.ref));
+  await batch.commit();
+}
+
 export async function importStudent({ name, grade, sport, months }) {
   // Used by the one-time Excel import: merge into an existing student (same name+sport) or create new.
   const q = query(collection(db, 'students'), where('name', '==', name), where('sport', '==', sport));

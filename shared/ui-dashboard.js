@@ -4,7 +4,7 @@ import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTota
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
 import {
   updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile,
-  setSportCoach, getAllStudentMeta, deleteStudent, deleteStaffAccount, mergeStudents,
+  setSportCoach, getAllStudentMeta, deleteStudent, removeStudentSport, deleteStaffAccount, mergeStudents,
 } from './firebase.js';
 
 function canManageStudents() { return isSuperAdmin() || isAdministrator(); }
@@ -421,13 +421,17 @@ function renderStudentSummary() {
         <div class="mini-sport-name">All sports</div>
       </div>`
     : '';
+  // Removing a sport only makes sense when there's another one left — a
+  // single-sport student dropping their only sport is "Delete this student"
+  // instead, which also cleans up their Student ID/PIN meta doc.
+  const canRemoveSport = canManageStudents() && registrations.length > 1;
   el('student-summary-sports').innerHTML = allChip + (registrations.map((s) => {
     const pt = presentTotalForMonths(s.months, 'all');
     const pct = pt.total ? Math.round((pt.present / pt.total) * 100) : 0;
     const active = summarySport === s.sport ? ' active' : '';
     return `
       <div class="mini-sport-card selectable${active}" data-sport="${escapeAttr(s.sport)}">
-        <div class="mini-sport-name">${escapeHtml(s.sport)}</div>
+        <div class="mini-sport-name">${escapeHtml(s.sport)}${canRemoveSport ? `<button type="button" class="mini-sport-remove-btn" data-remove-id="${escapeAttr(s.id)}" data-remove-sport="${escapeAttr(s.sport)}" title="Remove from ${escapeAttr(s.sport)}">✕</button>` : ''}</div>
         <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
         <div class="pct">${pt.present}/${pt.total} weeks · ${pct}%</div>
       </div>
@@ -436,6 +440,31 @@ function renderStudentSummary() {
 
   el('student-summary-sports').querySelectorAll('.mini-sport-card.selectable').forEach((card) => {
     card.addEventListener('click', () => { summarySport = card.dataset.sport; renderStudentSummary(); });
+  });
+
+  el('student-summary-sports').querySelectorAll('.mini-sport-remove-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.removeId;
+      const sport = btn.dataset.removeSport;
+      const confirmed = await confirmDialog(
+        `Remove ${name} from ${sport}?\n\nThis deletes their ${sport} registration, attendance, and fee records for that sport only — their other sports are unaffected.`,
+        { title: 'Remove from sport?' },
+      );
+      if (!confirmed) return;
+      btn.disabled = true;
+      try {
+        await removeStudentSport(id);
+        allStudents = allStudents.filter((s) => s.id !== id);
+        if (summarySport === sport) summarySport = 'all';
+        renderStudentSummary();
+        populateFilterOptions();
+        render();
+      } catch (err) {
+        el('student-manage-error').textContent = err.message;
+        btn.disabled = false;
+      }
+    });
   });
 
   const manageSection = el('student-manage-section');
