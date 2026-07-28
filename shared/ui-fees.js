@@ -22,6 +22,18 @@ let lastBulkAddIds = []; // doc IDs from the most recent bulkAddDueForSport() ru
 
 function canManageFees() { return isSuperAdmin() || isAdministrator(); }
 
+// A student registered for exactly 3 sports gets 2 of them free — whichever of
+// the 3 has the highest configured Sport Fee stays paid. Based on the standard
+// sportFeeAmounts, not whatever one-off amount is typed into a given Add Record
+// or Bulk Add run, so the "which sport is priciest" answer stays stable no
+// matter which form triggered it. Returns null for anyone not in exactly 3.
+function threeSportDiscount(studentName) {
+  const sports = allStudents.filter((s) => s.name === studentName).map((s) => s.sport);
+  if (sports.length !== 3) return null;
+  const paidSport = [...sports].sort((a, b) => (sportFeeAmounts[b] || 0) - (sportFeeAmounts[a] || 0))[0];
+  return { paidSport, freeSports: sports.filter((sp) => sp !== paidSport) };
+}
+
 // Best-effort — never lets a sync hiccup surface as an error on top of a
 // successful fee save. Silently no-ops for students who don't have a Student
 // ID + PIN set up for the parent portal yet (most won't).
@@ -145,19 +157,23 @@ async function bulkAddDueForSport() {
   btn.disabled = true;
   undoBtn.classList.add('hidden');
   statusEl.textContent = 'Adding…';
-  let added = 0, skipped = 0;
+  let added = 0, skipped = 0, discounted = 0;
   const addedIds = [];
   try {
     for (const student of registrations) {
+      const discount = threeSportDiscount(student.name);
+      const isFree = discount?.freeSports.includes(sport);
+      const effectiveAmount = isFree ? 0 : amount;
       for (const month of months) {
         const exists = allFees.some((f) => f.studentId === student.id && f.sport === sport && f.month === month);
         if (exists) { skipped++; continue; }
-        const ref = await addFee({ studentId: student.id, studentName: student.name, sport, amount, status: 'due', month });
+        const ref = await addFee({ studentId: student.id, studentName: student.name, sport, amount: effectiveAmount, status: 'due', month });
         addedIds.push(ref.id);
         added++;
+        if (isFree) discounted++;
       }
     }
-    statusEl.textContent = `Added ${added} due record(s)${skipped ? `, skipped ${skipped} already recorded` : ''}.`;
+    statusEl.textContent = `Added ${added} due record(s)${discounted ? ` (${discounted} free — 3-sport discount)` : ''}${skipped ? `, skipped ${skipped} already recorded` : ''}.`;
     lastBulkAddIds = addedIds;
     undoBtn.classList.toggle('hidden', addedIds.length === 0);
     const names = [...new Set(registrations.map((s) => s.name))];
@@ -328,13 +344,18 @@ function renderFeeSportChecks() {
     return;
   }
   wrap.classList.remove('hidden');
-  el('fee-sport-checks').innerHTML = registrations.map((s) => `
-    <label class="fee-sport-check-row">
+  const discount = threeSportDiscount(name);
+  el('fee-sport-checks').innerHTML = registrations.map((s) => {
+    const isFree = discount?.freeSports.includes(s.sport);
+    const amount = isFree ? 0 : (sportFeeAmounts[s.sport] ?? '');
+    return `
+    <label class="fee-sport-check-row${isFree ? ' fee-sport-free' : ''}">
       <input type="checkbox" class="fee-sport-check-box" data-sport="${escapeAttr(s.sport)}" data-student-id="${escapeAttr(s.id)}" checked />
-      <span class="fee-sport-check-name">${escapeHtml(s.sport)}</span>
-      <input type="number" min="0" step="1" class="fee-sport-check-amount" value="${sportFeeAmounts[s.sport] ?? ''}" placeholder="Amount" />
+      <span class="fee-sport-check-name">${escapeHtml(s.sport)}${isFree ? ' <span class="fee-sport-free-badge">Free — 3-sport discount</span>' : ''}</span>
+      <input type="number" min="0" step="1" class="fee-sport-check-amount" value="${amount}" placeholder="Amount" />
     </label>
-  `).join('');
+  `;
+  }).join('');
   el('fee-sport-checks').querySelectorAll('.fee-sport-check-box, .fee-sport-check-amount').forEach((input) => {
     input.addEventListener('input', updateTotalCollectable);
   });
