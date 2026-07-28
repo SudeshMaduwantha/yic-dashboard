@@ -288,6 +288,12 @@
 
         <!-- ================= DASHBOARD > STUDENT PROFILE ================= -->
         <section id="tab-dashboard-student-profile" class="tab-panel">
+          <section class="panel hidden" id="duplicate-students-panel">
+            <h2>Duplicate Students Found</h2>
+            <p class="student-summary-contact">Same name, same sport, registered more than once — pick which record to keep; the other's fee history and attendance merge into it.</p>
+            <div id="duplicate-students-list"></div>
+          </section>
+
           <section class="filters">
             <div class="filter-group">
               <label for="student-profile-filter-sport">Sport</label>
@@ -587,13 +593,23 @@
             <p id="fees-sync-web-status" class="login-success"></p>
             <div class="stats-grid" id="fees-stats"></div>
             <div class="filters">
-              <div class="filter-group">
-                <label for="fee-filter-sport">Sport</label>
-                <select id="fee-filter-sport"><option value="all">All sports</option></select>
+              <div class="filter-group fee-filter-sports-group">
+                <label>Sport</label>
+                <div id="fee-filter-sports" class="fee-filter-sports-checks"></div>
+              </div>
+              <div class="filter-group search-group">
+                <label for="fee-filter-student-search">Student</label>
+                <input id="fee-filter-student-search" type="text" placeholder="Search student name…" />
               </div>
               <div class="filter-group">
-                <label for="fee-filter-student">Student</label>
-                <select id="fee-filter-student"><option value="all">All students</option></select>
+                <label for="fee-filter-min-sports">Sports count</label>
+                <select id="fee-filter-min-sports">
+                  <option value="0">Any</option>
+                  <option value="2">2+ sports</option>
+                  <option value="3">3+ sports</option>
+                  <option value="4">4+ sports</option>
+                  <option value="5">5 sports</option>
+                </select>
               </div>
               <div class="filter-group">
                 <label for="fee-filter-status">Status</label>

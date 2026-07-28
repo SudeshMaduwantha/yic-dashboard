@@ -4,7 +4,7 @@ import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTota
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
 import {
   updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile,
-  setSportCoach, getAllStudentMeta, deleteStudent, deleteStaffAccount,
+  setSportCoach, getAllStudentMeta, deleteStudent, deleteStaffAccount, mergeStudents,
 } from './firebase.js';
 
 function canManageStudents() { return isSuperAdmin() || isAdministrator(); }
@@ -168,6 +168,80 @@ export function updateDashboardData(students) {
   populateFilterOptions();
   render();
   renderStudentSummary();
+  renderDuplicateStudents();
+}
+
+// Same name + same sport registered more than once is an accidental double
+// registration, not a multi-sport student (who legitimately has one doc per
+// sport). Groups them so an admin can pick which record to keep.
+function findDuplicateStudentGroups() {
+  const groups = new Map();
+  allStudents.forEach((s) => {
+    const key = `${s.name.trim().toLowerCase()}::${s.sport}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  });
+  return [...groups.values()].filter((g) => g.length > 1);
+}
+
+function renderDuplicateStudents() {
+  const panel = el('duplicate-students-panel');
+  if (!canManageStudents()) { panel.classList.add('hidden'); return; }
+  const groups = findDuplicateStudentGroups();
+  if (groups.length === 0) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+
+  el('duplicate-students-list').innerHTML = groups.map((group, gi) => `
+    <div class="duplicate-group">
+      <div class="duplicate-group-title">${escapeHtml(group[0].name)} — ${escapeHtml(group[0].sport)} (${group.length}×)</div>
+      ${group.map((s, i) => {
+        const pt = presentTotalForMonths(s.months, 'all');
+        return `
+        <label class="duplicate-candidate">
+          <input type="radio" name="dup-keep-${gi}" value="${escapeAttr(s.id)}" ${i === 0 ? 'checked' : ''} />
+          Keep this one — Grade ${escapeHtml(String(s.grade || '—'))}, ID ${escapeHtml(s.studentCode || '—')}, Phone ${escapeHtml(s.phone || '—')}, ${pt.present}/${pt.total} weeks marked
+        </label>`;
+      }).join('')}
+      <div class="modal-actions" style="justify-content: flex-start;">
+        <button type="button" class="connect-btn duplicate-merge-btn" data-group="${gi}">Merge duplicates</button>
+        <span class="duplicate-merge-status" data-group="${gi}"></span>
+      </div>
+    </div>
+  `).join('');
+
+  el('duplicate-students-list').querySelectorAll('.duplicate-merge-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const gi = Number(btn.dataset.group);
+      const group = groups[gi];
+      const keeperId = document.querySelector(`input[name="dup-keep-${gi}"]:checked`).value;
+      const keeper = group.find((s) => s.id === keeperId);
+      const duplicates = group.filter((s) => s.id !== keeperId);
+      const statusEl = document.querySelector(`.duplicate-merge-status[data-group="${gi}"]`);
+      btn.disabled = true;
+      statusEl.textContent = 'Merging…';
+      try {
+        // Attendance union — the keeper's own mark always wins if both have one
+        // for the same month+week, the duplicate only fills gaps the keeper has.
+        const mergedMonths = { ...keeper.months };
+        duplicates.forEach((dup) => {
+          Object.entries(dup.months || {}).forEach(([monthKey, weeks]) => {
+            mergedMonths[monthKey] = { ...(weeks || {}), ...(mergedMonths[monthKey] || {}) };
+          });
+        });
+        const keeperUpdates = {
+          months: mergedMonths,
+          grade: keeper.grade || duplicates.find((d) => d.grade)?.grade || null,
+          studentCode: keeper.studentCode || duplicates.find((d) => d.studentCode)?.studentCode || null,
+          phone: keeper.phone || duplicates.find((d) => d.phone)?.phone || null,
+        };
+        await mergeStudents(keeperId, duplicates.map((d) => d.id), keeperUpdates);
+        statusEl.textContent = 'Merged.';
+      } catch (err) {
+        statusEl.textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+  });
 }
 
 export function updateDashboardFees(fees) {

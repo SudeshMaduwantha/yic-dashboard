@@ -10,7 +10,10 @@ let allFees = [];
 let editingId = null;
 let currentRows = []; // whatever's currently on screen after filters — what Export sends
 const filters = {
-  sport: 'all', student: 'all', status: 'all', monthFrom: '', monthTo: '',
+  sports: [], // empty = all sports; otherwise the checked sport chips
+  studentSearch: '', // name substring, case-insensitive
+  minSports: 0, // 0 = no filter; else student must be registered in >= this many distinct sports
+  status: 'all', monthFrom: '', monthTo: '',
 };
 
 let sportFeeAmounts = {}; // { [sport]: amount } — standard monthly fee, set on the Sport Fees panel
@@ -107,8 +110,8 @@ export function initFeesUI() {
     updateTotalCollectable();
   });
 
-  el('fee-filter-sport').addEventListener('change', (e) => { filters.sport = e.target.value; renderFeeFilterStudents(); renderFeesTable(); });
-  el('fee-filter-student').addEventListener('change', (e) => { filters.student = e.target.value; renderFeesTable(); });
+  el('fee-filter-student-search').addEventListener('input', (e) => { filters.studentSearch = e.target.value.trim().toLowerCase(); renderFeesTable(); });
+  el('fee-filter-min-sports').addEventListener('change', (e) => { filters.minSports = Number(e.target.value) || 0; renderFeesTable(); });
   el('fee-filter-status').addEventListener('change', (e) => { filters.status = e.target.value; renderFeesTable(); });
   el('fee-filter-month-from').addEventListener('change', (e) => { filters.monthFrom = e.target.value; renderFeesTable(); });
   el('fee-filter-month-to').addEventListener('change', (e) => { filters.monthTo = e.target.value; renderFeesTable(); });
@@ -444,13 +447,7 @@ export function updateFeesStudentData(students) {
   if (sports.includes(prevBulkSport)) bulkSportSelect.value = prevBulkSport;
   if (!el('bulk-due-amount').value) el('bulk-due-amount').value = sportFeeAmounts[bulkSportSelect.value] ?? '';
 
-  const filterSportSelect = el('fee-filter-sport');
-  const prevFilterSport = filterSportSelect.value || 'all';
-  filterSportSelect.innerHTML = '<option value="all">All sports</option>' +
-    sports.map((s) => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('');
-  filterSportSelect.value = sports.includes(prevFilterSport) ? prevFilterSport : 'all';
-  filters.sport = filterSportSelect.value;
-  renderFeeFilterStudents();
+  renderFeeFilterSports(sports);
 
   const reportSportSelect = el('report-filter-sport');
   const prevReportSport = reportSportSelect.value || 'all';
@@ -470,16 +467,26 @@ function populateFeeStudentSelect() {
   if (names.includes(prev)) el('fee-student').value = prev;
 }
 
-function renderFeeFilterStudents() {
-  const sport = filters.sport;
-  const students = (sport === 'all' ? allStudents : allStudents.filter((s) => s.sport === sport))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const select = el('fee-filter-student');
-  const prev = select.value || 'all';
-  select.innerHTML = '<option value="all">All students</option>' +
-    students.map((s) => `<option value="${escapeAttr(s.id)}">${escapeHtml(s.name)}</option>`).join('');
-  select.value = students.some((s) => s.id === prev) ? prev : 'all';
-  filters.student = select.value;
+// Checkbox chips instead of a single-select — lets multiple sports be shown at
+// once. All start checked (equivalent to "all sports"); unchecking narrows it.
+function renderFeeFilterSports(sports) {
+  const wrap = el('fee-filter-sports');
+  const isFirstRender = wrap.dataset.rendered !== '1';
+  const prevChecked = new Set(filters.sports);
+  wrap.innerHTML = sports.map((s) => `
+    <label class="fee-filter-sport-chip">
+      <input type="checkbox" value="${escapeAttr(s)}" ${(isFirstRender || prevChecked.has(s)) ? 'checked' : ''} />
+      ${escapeHtml(s)}
+    </label>
+  `).join('');
+  wrap.dataset.rendered = '1';
+  filters.sports = [...wrap.querySelectorAll('input:checked')].map((i) => i.value);
+  wrap.querySelectorAll('input').forEach((input) => {
+    input.addEventListener('change', () => {
+      filters.sports = [...wrap.querySelectorAll('input:checked')].map((i) => i.value);
+      renderFeesTable();
+    });
+  });
 }
 
 export function updateFeesData(fees) {
@@ -491,15 +498,24 @@ export function updateFeesData(fees) {
 function renderFeesTable() {
   const body = el('fees-table-body');
   const head = el('fees-table-head');
-  const showSport = filters.sport === 'all';
+  const showSport = filters.sports.length !== 1;
+
+  // studentName -> distinct sport count, for the "Sports count" filter — a
+  // student registered for 3 sports has 3 /students docs sharing their name.
+  const sportsCountByName = new Map();
+  allStudents.forEach((s) => {
+    if (!sportsCountByName.has(s.name)) sportsCountByName.set(s.name, new Set());
+    sportsCountByName.get(s.name).add(s.sport);
+  });
 
   // Grouped by student (then newest month first within each) so the same
   // student's records sit together and No./Student ID/Name can be merged with
   // rowspan below instead of repeating on every line.
   const months = filters.monthFrom ? monthRange(filters.monthFrom, filters.monthTo) : null;
   const rows = allFees
-    .filter((r) => filters.sport === 'all' || r.sport === filters.sport)
-    .filter((r) => filters.student === 'all' || r.studentId === filters.student)
+    .filter((r) => filters.sports.length === 0 || filters.sports.includes(r.sport))
+    .filter((r) => !filters.studentSearch || r.studentName.toLowerCase().includes(filters.studentSearch))
+    .filter((r) => !filters.minSports || (sportsCountByName.get(r.studentName)?.size || 0) >= filters.minSports)
     .filter((r) => filters.status === 'all' || r.status === filters.status)
     .filter((r) => !months || months.includes(r.month))
     .sort((a, b) => a.studentName.localeCompare(b.studentName) || (b.month || '').localeCompare(a.month || ''));

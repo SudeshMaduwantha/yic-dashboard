@@ -322,6 +322,27 @@ tbody tr:hover { background: rgba(30,41,90,0.04); }
 }
 .reg-sport-check input { margin: 0; accent-color: var(--accent); }
 .reg-sport-check.already { color: var(--text-dim); opacity: 0.7; }
+
+.fee-filter-sports-group { flex: 1; min-width: 220px; }
+.fee-filter-sports-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+.fee-filter-sport-chip {
+  display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--panel-border); border-radius: 7px; padding: 6px 9px;
+  cursor: pointer;
+}
+.fee-filter-sport-chip input { margin: 0; accent-color: var(--accent); }
+
+.duplicate-group {
+  background: var(--panel-2); border: 1px solid var(--panel-border); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 12px;
+}
+.duplicate-group-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+.duplicate-candidate {
+  display: block; font-size: 12px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--panel-border); border-radius: 7px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+}
+.duplicate-candidate input { margin-right: 6px; accent-color: var(--accent); }
+.duplicate-merge-status { font-size: 12px; color: var(--accent-2); margin-left: 10px; }
 .primary-btn {
   background: var(--accent); color: #1a0f00; border: none; font-weight: 700;
   padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 13px;

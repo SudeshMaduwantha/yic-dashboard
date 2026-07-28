@@ -174,6 +174,22 @@ export async function deleteStudent(studentIds, studentCode) {
   await batch.commit();
 }
 
+// Consolidates 2+ /students docs that are true duplicates (same name, same
+// sport — an accidental double-registration, not a multi-sport student, who
+// legitimately has one doc per sport). Fee records move to the keeper;
+// keeperUpdates carries the already-merged months/grade/studentCode/phone
+// (computed client-side, so conflicts are resolved before this ever runs).
+export async function mergeStudents(keeperId, duplicateIds, keeperUpdates) {
+  const batch = writeBatch(db);
+  const feeSnaps = await Promise.all(
+    duplicateIds.map((id) => getDocs(query(collection(db, 'fees'), where('studentId', '==', id)))),
+  );
+  feeSnaps.forEach((snap) => snap.forEach((feeDoc) => batch.update(feeDoc.ref, { studentId: keeperId })));
+  batch.update(doc(db, 'students', keeperId), keeperUpdates);
+  duplicateIds.forEach((id) => batch.delete(doc(db, 'students', id)));
+  await batch.commit();
+}
+
 export async function importStudent({ name, grade, sport, months }) {
   // Used by the one-time Excel import: merge into an existing student (same name+sport) or create new.
   const q = query(collection(db, 'students'), where('name', '==', name), where('sport', '==', sport));
