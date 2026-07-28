@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { el, escapeHtml, escapeAttr, KNOWN_SPORTS, monthRange, currentMonthKey, buildPublicProfileSnapshot, presentTotalForMonths } from './utils.js';
 import {
-  addFee, updateFee, getStudentMeta, getAllStudentMeta, syncPublicProfile, setSportFee,
+  addFee, updateFee, deleteFee, getStudentMeta, getAllStudentMeta, syncPublicProfile, setSportFee,
 } from './firebase.js';
 import { isSuperAdmin, isAdministrator } from './role-state.js';
 
@@ -17,6 +17,8 @@ let sportFeeAmounts = {}; // { [sport]: amount } — standard monthly fee, set o
 
 let currentReportRows = []; // Collection Report's current filtered/grouped rows — what its Export sends
 const reportFilters = { sport: 'all' };
+
+let lastBulkAddIds = []; // doc IDs from the most recent bulkAddDueForSport() run — what "Undo last add" removes
 
 function canManageFees() { return isSuperAdmin() || isAdministrator(); }
 
@@ -109,6 +111,7 @@ export function initFeesUI() {
     el('bulk-due-amount').value = sportFeeAmounts[el('bulk-due-sport').value] ?? '';
   });
   el('bulk-due-btn').addEventListener('click', bulkAddDueForSport);
+  el('bulk-due-undo-btn').addEventListener('click', undoLastBulkAdd);
 
   // Collection Report — defaults to "this month" so the tab is useful with zero setup.
   const nowKey = currentMonthKey();
@@ -138,23 +141,50 @@ async function bulkAddDueForSport() {
     return;
   }
   const btn = el('bulk-due-btn');
+  const undoBtn = el('bulk-due-undo-btn');
   btn.disabled = true;
+  undoBtn.classList.add('hidden');
   statusEl.textContent = 'Adding…';
   let added = 0, skipped = 0;
+  const addedIds = [];
   try {
     for (const student of registrations) {
       for (const month of months) {
         const exists = allFees.some((f) => f.studentId === student.id && f.sport === sport && f.month === month);
         if (exists) { skipped++; continue; }
-        await addFee({ studentId: student.id, studentName: student.name, sport, amount, status: 'due', month });
+        const ref = await addFee({ studentId: student.id, studentName: student.name, sport, amount, status: 'due', month });
+        addedIds.push(ref.id);
         added++;
       }
     }
     statusEl.textContent = `Added ${added} due record(s)${skipped ? `, skipped ${skipped} already recorded` : ''}.`;
+    lastBulkAddIds = addedIds;
+    undoBtn.classList.toggle('hidden', addedIds.length === 0);
     const names = [...new Set(registrations.map((s) => s.name))];
     names.forEach((name) => autoSyncPublicProfile(name));
   } finally {
     btn.disabled = false;
+  }
+}
+
+// Removes exactly the records the last bulkAddDueForSport() run created — leaves
+// anything it skipped (because a record already existed) untouched. Picking a
+// too-wide month range and only noticing after clicking "Add Due records" is the
+// whole reason this exists.
+async function undoLastBulkAdd() {
+  if (lastBulkAddIds.length === 0) return;
+  const ids = lastBulkAddIds;
+  const statusEl = el('bulk-due-status');
+  const undoBtn = el('bulk-due-undo-btn');
+  undoBtn.disabled = true;
+  statusEl.textContent = `Undoing ${ids.length} record(s)…`;
+  try {
+    await Promise.all(ids.map((id) => deleteFee(id)));
+    statusEl.textContent = `Undone — removed ${ids.length} due record(s).`;
+    lastBulkAddIds = [];
+    undoBtn.classList.add('hidden');
+  } finally {
+    undoBtn.disabled = false;
   }
 }
 
