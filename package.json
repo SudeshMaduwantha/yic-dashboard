@@ -1,6 +1,6 @@
 {
   "name": "yic-dashboard",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "YIC Sport School attendance & fees dashboard",
   "main": "main.js",
   "scripts": {
