@@ -10,3 +10,5 @@ firestore-debug.log
 ui-debug.log
 # Local offline cache — regenerable from Firestore, contains real student names/attendance (PII).
 src/cache.json
+# Exported by the "Export Student IDs & PINs" button — real login credentials (PII).
+student-ids-pins-*.txt

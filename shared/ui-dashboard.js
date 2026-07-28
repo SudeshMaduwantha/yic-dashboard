@@ -1,31 +1,164 @@
 import { Chart, BarController, CategoryScale, LinearScale, BarElement } from 'chart.js';
-import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS } from './utils.js';
+import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, confirmDialog, buildPublicProfileSnapshot } from './utils.js';
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
-import { updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile, setSportCoach } from './firebase.js';
+import {
+  updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile,
+  setSportCoach, getAllStudentMeta, deleteStudent, deleteStaffAccount,
+} from './firebase.js';
 
 function canManageStudents() { return isSuperAdmin() || isAdministrator(); }
 
 Chart.register(BarController, CategoryScale, LinearScale, BarElement);
 
 let attendanceChart = null;
+let incomeChart = null;
 let allStudents = [];
 let allFees = [];
 let feesLoaded = false; // stays false for roles (coach) that never receive fee data at all
 let allCoaches = [];
+let allStaff = [];
 const filters = { sport: 'all', grade: 'all', month: 'all', search: '' };
+const profileFilters = { sport: 'all', grade: 'all' };
+let detailStudentQuery = null; // set by openStudentDetail() — what "View Attendance" searches for
+
+// Overview and the Attendance Table sub-tab each have their own copy of the
+// sport/grade/month/search controls but share one `filters` state — this keeps
+// both sets of inputs showing the same values no matter which one changed.
+function syncFilterInputs() {
+  el('sport-filter').value = filters.sport;
+  el('att-table-filter-sport').value = filters.sport;
+  el('grade-filter').value = filters.grade;
+  el('att-table-filter-grade').value = filters.grade;
+  el('month-filter').value = filters.month;
+  el('att-table-filter-month').value = filters.month;
+  el('search-input').value = filters.search;
+  el('att-table-filter-search').value = filters.search;
+  syncSportStripActive();
+}
 
 export function initDashboardUI() {
-  el('sport-filter').addEventListener('change', (e) => { filters.sport = e.target.value; render(); syncSportStripActive(); });
-  el('grade-filter').addEventListener('change', (e) => { filters.grade = e.target.value; render(); });
-  el('month-filter').addEventListener('change', (e) => { filters.month = e.target.value; render(); });
-  el('search-input').addEventListener('input', (e) => { filters.search = e.target.value.trim().toLowerCase(); render(); });
+  el('sport-filter').addEventListener('change', (e) => { filters.sport = e.target.value; syncFilterInputs(); render(); });
+  el('grade-filter').addEventListener('change', (e) => { filters.grade = e.target.value; syncFilterInputs(); render(); });
+  el('month-filter').addEventListener('change', (e) => { filters.month = e.target.value; syncFilterInputs(); render(); });
+  el('search-input').addEventListener('input', (e) => { filters.search = e.target.value.trim().toLowerCase(); syncFilterInputs(); render(); });
+
+  el('att-table-filter-sport').addEventListener('change', (e) => { filters.sport = e.target.value; syncFilterInputs(); render(); });
+  el('att-table-filter-grade').addEventListener('change', (e) => { filters.grade = e.target.value; syncFilterInputs(); render(); });
+  el('att-table-filter-month').addEventListener('change', (e) => { filters.month = e.target.value; syncFilterInputs(); render(); });
+  el('att-table-filter-search').addEventListener('input', (e) => { filters.search = e.target.value.trim().toLowerCase(); syncFilterInputs(); render(); });
+
+  el('student-profile-filter-sport').addEventListener('change', (e) => { profileFilters.sport = e.target.value; renderProfileFilterStudents(); });
+  el('student-profile-filter-grade').addEventListener('change', (e) => { profileFilters.grade = e.target.value; renderProfileFilterStudents(); });
   el('student-filter').addEventListener('change', renderStudentSummary);
   el('student-manage-save').addEventListener('click', () => saveStudentChanges(false));
   el('student-manage-sync').addEventListener('click', () => saveStudentChanges(true));
+  el('student-manage-delete').addEventListener('click', deleteCurrentStudent);
+  el('export-ids-btn').addEventListener('click', exportStudentIdsAndPins);
+  el('student-detail-close').addEventListener('click', closeStudentDetail);
+  el('student-detail-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'student-detail-modal') closeStudentDetail();
+  });
+  el('student-detail-view-attendance').addEventListener('click', () => {
+    if (!detailStudentQuery) return;
+    closeStudentDetail();
+    filters.search = detailStudentQuery;
+    syncFilterInputs();
+    render();
+    document.querySelector('.sidebar-subitem[data-tab="dashboard-attendance-table"]')?.click();
+  });
+}
+
+function closeStudentDetail() {
+  el('student-detail-modal').classList.add('hidden');
+}
+
+function openStudentDetail(name) {
+  const registrations = allStudents.filter((s) => s.name === name);
+  if (registrations.length === 0) return;
+  const grade = registrations.find((s) => s.grade)?.grade;
+  const studentCode = registrations.find((s) => s.studentCode)?.studentCode;
+  const phone = registrations.find((s) => s.phone)?.phone;
+  // Prefer the unique Student ID over the name so "View Attendance" can't pick
+  // up an unrelated student who happens to share the same name.
+  detailStudentQuery = (studentCode || name).toLowerCase();
+
+  el('student-detail-name').textContent = name;
+  el('student-detail-info').innerHTML = [
+    studentCode ? `<div class="student-detail-row"><span class="label">Student ID</span> ${escapeHtml(studentCode)}</div>` : '',
+    phone ? `<div class="student-detail-row"><span class="label">Mobile</span> ${escapeHtml(phone)}</div>` : '',
+    grade ? `<div class="student-detail-row"><span class="label">Grade</span> ${escapeHtml(String(grade))}</div>` : '',
+  ].filter(Boolean).join('') || '<div class="empty-state">No extra details on file.</div>';
+
+  el('student-detail-sports').innerHTML = registrations.map((s) => {
+    const pt = presentTotalForMonths(s.months, 'all');
+    const pct = pt.total ? Math.round((pt.present / pt.total) * 100) : 0;
+    return `
+      <div class="mini-sport-card">
+        <div class="mini-sport-name">${escapeHtml(s.sport)}</div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
+        <div class="pct">${pt.present}/${pt.total} weeks · ${pct}%</div>
+      </div>
+    `;
+  }).join('') || '<div class="empty-state">Not registered for any sport.</div>';
+
+  el('student-detail-modal').classList.remove('hidden');
+}
+
+async function deleteCurrentStudent() {
+  const name = el('student-filter').value;
+  if (!name) return;
+  const registrations = allStudents.filter((s) => s.name === name);
+  const studentCode = registrations.find((s) => s.studentCode)?.studentCode || '';
+  const sportsList = registrations.map((s) => s.sport).join(', ');
+  const confirmed = await confirmDialog(
+    `Delete ${name} (${sportsList})?\n\nThis permanently removes their registration, attendance, and fee records. This cannot be undone.`,
+    { title: 'Delete student?' },
+  );
+  if (!confirmed) return;
+
+  const btn = el('student-manage-delete');
+  const errorEl = el('student-manage-error');
+  errorEl.textContent = '';
+  btn.disabled = true;
+  try {
+    await deleteStudent(registrations.map((s) => s.id), studentCode);
+    allStudents = allStudents.filter((s) => s.name !== name);
+    el('student-filter').value = '';
+    populateFilterOptions();
+    renderStudentSummary();
+    render();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Clears every cached module-level value and hides every role-gated panel.
+// Called on logout so that switching accounts in the same running window (common
+// on a shared staff PC) can never leave a lower-privilege login looking at data
+// left over from the previous, more-privileged session — e.g. a Coach seeing the
+// Staff Accounts table because it was rendered for a Super Admin earlier and
+// nothing since then re-hid it (its visibility only re-evaluates when new staff
+// data arrives, which never happens for a Coach).
+export function resetDashboardUI() {
+  allStudents = [];
+  allFees = [];
+  feesLoaded = false;
+  allCoaches = [];
+  allStaff = [];
+  filters.sport = 'all'; filters.grade = 'all'; filters.month = 'all'; filters.search = '';
+  el('export-actions').classList.add('hidden');
+  el('staff-panel').classList.add('hidden');
+  el('student-summary-panel').classList.add('hidden');
+  el('student-filter').value = '';
+  el('coaches-table-body').innerHTML = '';
+  render();
 }
 
 export function updateDashboardData(students) {
   allStudents = students;
+  el('export-actions').classList.toggle('hidden', !canManageStudents());
   populateFilterOptions();
   render();
   renderStudentSummary();
@@ -35,6 +168,7 @@ export function updateDashboardFees(fees) {
   allFees = fees;
   feesLoaded = true;
   renderStudentSummary();
+  renderIncomeChart();
 }
 
 export function updateCoaches(coaches) {
@@ -42,15 +176,65 @@ export function updateCoaches(coaches) {
   renderCoachesPanel();
 }
 
+export function updateStaffList(staff) {
+  allStaff = staff;
+  renderStaffPanel();
+}
+
+function renderStaffPanel() {
+  const panel = el('staff-panel');
+  if (!isSuperAdmin()) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+
+  const myUid = getCurrentRole()?.uid;
+  const sorted = [...allStaff].sort((a, b) => (a.email || '').localeCompare(b.email || ''));
+  el('staff-table-body').innerHTML = sorted.map((s, i) => {
+    const sports = s.role === 'coach' ? (s.sports || []).join(', ') || '—' : '—';
+    const isSelf = s.uid === myUid;
+    return `
+      <tr data-uid="${escapeAttr(s.uid)}">
+        <td>${i + 1}</td>
+        <td>${escapeHtml(s.email || '—')}</td>
+        <td>${escapeHtml(ROLE_LABELS[s.role] || s.role)}</td>
+        <td>${escapeHtml(sports)}</td>
+        <td>${isSelf ? '' : '<button type="button" class="delete-btn staff-delete-btn">Delete</button>'}</td>
+      </tr>
+    `;
+  }).join('');
+
+  el('staff-table-body').querySelectorAll('.staff-delete-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('tr');
+      const uid = row.dataset.uid;
+      const staffMember = allStaff.find((s) => s.uid === uid);
+      const confirmed = await confirmDialog(
+        `Delete staff account "${staffMember?.email}"?\n\nThey'll immediately lose access to the app. This cannot be undone from here.`,
+        { title: 'Delete staff account?' },
+      );
+      if (!confirmed) return;
+      btn.disabled = true;
+      el('staff-panel-error').textContent = '';
+      try {
+        await deleteStaffAccount(uid);
+      } catch (err) {
+        el('staff-panel-error').textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 function renderCoachesPanel() {
   const sports = isCoach() ? getCurrentRole().sports : KNOWN_SPORTS;
   const canEdit = isSuperAdmin();
-  el('coaches-table-body').innerHTML = sports.map((sport) => {
+  el('coaches-table-body').innerHTML = sports.map((sport, i) => {
     const coach = allCoaches.find((c) => c.sport === sport) || {};
     if (canEdit) {
       return `
         <tr data-sport="${escapeAttr(sport)}">
+          <td>${i + 1}</td>
           <td>${escapeHtml(sport)}</td>
+          <td><input class="coach-input coach-email" type="email" value="${escapeAttr(coach.email || '')}" placeholder="—" /></td>
           <td><input class="coach-input coach-name" type="text" value="${escapeAttr(coach.name || '')}" placeholder="—" /></td>
           <td><input class="coach-input coach-phone" type="tel" value="${escapeAttr(coach.phone || '')}" placeholder="—" /></td>
           <td><button type="button" class="connect-btn coach-save-btn">Save</button></td>
@@ -59,7 +243,9 @@ function renderCoachesPanel() {
     }
     return `
       <tr>
+        <td>${i + 1}</td>
         <td>${escapeHtml(sport)}</td>
+        <td>${escapeHtml(coach.email || '—')}</td>
         <td>${escapeHtml(coach.name || '—')}</td>
         <td>${escapeHtml(coach.phone || '—')}</td>
         <td></td>
@@ -74,10 +260,11 @@ function renderCoachesPanel() {
         const sport = row.dataset.sport;
         const name = row.querySelector('.coach-name').value.trim();
         const phone = row.querySelector('.coach-phone').value.trim();
+        const email = row.querySelector('.coach-email').value.trim();
         btn.disabled = true;
         btn.textContent = 'Saving…';
         try {
-          await setSportCoach(sport, { name, phone });
+          await setSportCoach(sport, { name, phone, email });
           btn.textContent = 'Saved ✓';
           setTimeout(() => { btn.textContent = 'Save'; }, 1500);
         } finally {
@@ -92,21 +279,40 @@ function populateFilterOptions() {
   const sports = [...new Set(allStudents.map((s) => s.sport))].sort();
   const grades = [...new Set(allStudents.map((s) => s.grade).filter(Boolean))].sort();
   const months = allMonthKeys(allStudents);
-  const names = [...new Set(allStudents.map((s) => s.name))].sort();
 
   syncSelectOptions(el('sport-filter'), sports, 'All sports', (s) => s);
   syncSelectOptions(el('grade-filter'), grades, 'All grades', (g) => `Grade ${g}`);
   syncSelectOptions(el('month-filter'), months, 'All months', formatMonthLabel);
+  syncSelectOptions(el('att-table-filter-sport'), sports, 'All sports', (s) => s);
+  syncSelectOptions(el('att-table-filter-grade'), grades, 'All grades', (g) => `Grade ${g}`);
+  syncSelectOptions(el('att-table-filter-month'), months, 'All months', formatMonthLabel);
+  syncFilterInputs();
+
+  syncSelectOptions(el('student-profile-filter-sport'), sports, 'All sports', (s) => s);
+  syncSelectOptions(el('student-profile-filter-grade'), grades, 'All grades', (g) => `Grade ${g}`);
+  profileFilters.sport = el('student-profile-filter-sport').value;
+  profileFilters.grade = el('student-profile-filter-grade').value;
+  renderProfileFilterStudents();
+
+  // Coaches only ever see their own sport(s); everyone else sees all known sports,
+  // even ones with zero students registered yet.
+  renderSportStrip(isCoach() ? getCurrentRole().sports : KNOWN_SPORTS);
+}
+
+// Narrows the Student Profile picker to students matching the sport/grade
+// filters above it — same shape as ui-fees.js's renderFeeFilterStudents().
+function renderProfileFilterStudents() {
+  const students = allStudents
+    .filter((s) => profileFilters.sport === 'all' || s.sport === profileFilters.sport)
+    .filter((s) => profileFilters.grade === 'all' || String(s.grade) === profileFilters.grade);
+  const names = [...new Set(students.map((s) => s.name))].sort();
 
   const studentSelect = el('student-filter');
   const prevStudent = studentSelect.value;
   studentSelect.innerHTML = '<option value="">Pick a student…</option>' +
     names.map((n) => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
   studentSelect.value = names.includes(prevStudent) ? prevStudent : '';
-
-  // Coaches only ever see their own sport(s); everyone else sees all known sports,
-  // even ones with zero students registered yet.
-  renderSportStrip(isCoach() ? getCurrentRole().sports : KNOWN_SPORTS);
+  renderStudentSummary();
 }
 
 function renderStudentSummary() {
@@ -122,7 +328,9 @@ function renderStudentSummary() {
   const studentCode = registrations.find((s) => s.studentCode)?.studentCode || '';
   const phone = registrations.find((s) => s.phone)?.phone || '';
   el('student-summary-title').textContent = `${name}${grade ? ` · Grade ${grade}` : ''}${studentCode ? ` · ${studentCode}` : ''}`;
-  el('student-summary-contact').textContent = phone ? `📱 ${phone}` : '';
+  el('student-summary-contact').innerHTML = phone
+    ? `<svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg> ${escapeHtml(phone)}`
+    : '';
 
   el('student-summary-sports').innerHTML = registrations.map((s) => {
     const pt = presentTotalForMonths(s.months, 'all');
@@ -153,18 +361,30 @@ function renderStudentSummary() {
   }
 
   if (!feesLoaded) {
-    // Fees data unavailable for this role (e.g. coach) — skip the section entirely.
+    // Fees data unavailable for this role — skip the section entirely.
     el('student-summary-fees').innerHTML = '';
     el('student-summary-fee-table').classList.add('hidden');
     return;
   }
   const records = allFees.filter((f) => f.studentName === name);
-  const totalDue = records.filter((f) => f.status === 'due').reduce((sum, f) => sum + Number(f.amount || 0), 0);
-  const totalPaid = records.filter((f) => f.status === 'paid').reduce((sum, f) => sum + Number(f.amount || 0), 0);
-  el('student-summary-fees').innerHTML = `
-    <div class="fee-summary-pill ${totalDue > 0 ? 'due' : 'clear'}">Total Due: Rs. ${totalDue.toLocaleString()}</div>
-    <div class="fee-summary-pill paid">Total Paid: Rs. ${totalPaid.toLocaleString()}</div>
-  `;
+  const showAmounts = !isCoach();
+
+  // Coaches only ever see paid/unpaid status, never amounts — same rule the
+  // Attendance tab's fee pill already follows, so no Total Due/Paid pills either.
+  if (showAmounts) {
+    const totalDue = records.filter((f) => f.status === 'due').reduce((sum, f) => sum + Number(f.amount || 0), 0);
+    const totalPaid = records.filter((f) => f.status === 'paid').reduce((sum, f) => sum + Number(f.amount || 0), 0);
+    el('student-summary-fees').innerHTML = `
+      <div class="fee-summary-pill ${totalDue > 0 ? 'due' : 'clear'}">Total Due: Rs. ${totalDue.toLocaleString()}</div>
+      <div class="fee-summary-pill paid">Total Paid: Rs. ${totalPaid.toLocaleString()}</div>
+    `;
+  } else {
+    el('student-summary-fees').innerHTML = '';
+  }
+
+  el('student-summary-fee-head').innerHTML = showAmounts
+    ? '<tr><th>Sport</th><th>Month</th><th>Amount</th><th>Status</th></tr>'
+    : '<tr><th>Sport</th><th>Month</th><th>Status</th></tr>';
 
   const feeTable = el('student-summary-fee-table');
   if (records.length === 0) {
@@ -176,7 +396,7 @@ function renderStudentSummary() {
       <tr>
         <td>${escapeHtml(r.sport)}</td>
         <td>${escapeHtml(r.month)}</td>
-        <td>Rs. ${Number(r.amount).toLocaleString()}</td>
+        ${showAmounts ? `<td>Rs. ${Number(r.amount).toLocaleString()}</td>` : ''}
         <td><span class="status-pill ${r.status}">${r.status === 'paid' ? 'Paid' : 'Due'}</span></td>
       </tr>
     `).join('');
@@ -227,12 +447,7 @@ async function saveStudentChanges(alsoSync) {
 
     if (alsoSync) {
       if (!pin) { errorEl.textContent = 'Set a PIN before syncing.'; return; }
-      const sports = registrations.map((s) => {
-        const pt = presentTotalForMonths(s.months, 'all');
-        return { sport: s.sport, present: pt.present, total: pt.total, pct: pt.total ? Math.round((pt.present / pt.total) * 100) : 0 };
-      });
-      const feeRecords = allFees.filter((f) => f.studentName === newName)
-        .map((f) => ({ sport: f.sport, month: f.month, amount: f.amount, status: f.status }));
+      const { sports, feeRecords } = buildPublicProfileSnapshot(newName, allStudents, allFees);
       await syncPublicProfile(code, { name: newName, grade: newGrade || null, sports, feeRecords });
       statusEl.textContent = `Synced — parents can look up "${newName}" with ID ${code} and their PIN.`;
     }
@@ -242,6 +457,46 @@ async function saveStudentChanges(alsoSync) {
   } finally {
     saveBtn.disabled = false;
     syncBtn.disabled = false;
+  }
+}
+
+async function exportStudentIdsAndPins() {
+  const btn = el('export-ids-btn');
+  const statusEl = el('export-ids-status');
+  btn.disabled = true;
+  statusEl.textContent = 'Gathering…';
+  try {
+    const meta = await getAllStudentMeta();
+    if (meta.length === 0) {
+      statusEl.textContent = 'No students have a Student ID + PIN set yet.';
+      return;
+    }
+    const gradeByName = new Map(allStudents.map((s) => [s.name, s.grade]));
+    const sorted = [...meta].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const lines = [
+      'YIC Sport School — Student Login IDs & PINs',
+      `Generated: ${new Date().toLocaleString()}`,
+      '',
+      ...sorted.map((m) => {
+        const grade = gradeByName.get(m.name);
+        return `${m.name}${grade ? ` (Grade ${grade})` : ''} — ID: ${m.studentCode} — PIN: ${m.pin}`;
+      }),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `student-ids-pins-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    statusEl.textContent = `Saved ${sorted.length} student(s) to your Downloads folder.`;
+  } catch (err) {
+    statusEl.textContent = `Export failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { statusEl.textContent = ''; }, 5000);
   }
 }
 
@@ -297,6 +552,7 @@ function render() {
   renderRoster();
   renderAttendanceTable();
   renderChart();
+  renderIncomeChart();
 }
 
 function renderStats() {
@@ -327,7 +583,7 @@ function renderRoster() {
   container.innerHTML = roster.map((r) => {
     const pct = r.total ? Math.round((r.present / r.total) * 100) : 0;
     return `
-      <div class="roster-card">
+      <div class="roster-card" data-name="${escapeAttr(r.name)}">
         <div class="name">${escapeHtml(r.name)}${r.studentCode ? ` <span class="student-code-tag">${escapeHtml(r.studentCode)}</span>` : ''}</div>
         <div class="meta">Grade ${escapeHtml(String(r.grade || '—'))} · ${escapeHtml(r.sport)}</div>
         <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
@@ -335,6 +591,9 @@ function renderRoster() {
       </div>
     `;
   }).join('');
+  container.querySelectorAll('.roster-card').forEach((card) => {
+    card.addEventListener('click', () => openStudentDetail(card.dataset.name));
+  });
 }
 
 function renderAttendanceTable() {
@@ -344,27 +603,27 @@ function renderAttendanceTable() {
 
   if (filters.month === 'all') {
     const months = allMonthKeys(allStudents);
-    head.innerHTML = `<tr><th>Name</th><th>Grade</th><th>Sport</th>${months.map((m) => `<th>${escapeHtml(formatMonthLabel(m))}</th>`).join('')}<th>Overall</th></tr>`;
+    head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${months.map((m) => `<th>${escapeHtml(formatMonthLabel(m))}</th>`).join('')}<th>Overall</th></tr>`;
     if (roster.length === 0) {
-      body.innerHTML = `<tr><td colspan="${4 + months.length}" class="empty-state">No students match the current filters.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="${6 + months.length}" class="empty-state">No students match the current filters.</td></tr>`;
       return;
     }
-    body.innerHTML = roster.map((r) => {
+    body.innerHTML = roster.map((r, i) => {
       const cells = months.map((m) => {
         const pt = presentTotalForMonths(r.months, m);
         return `<td>${pt.total ? `${pt.present}/${pt.total}` : '—'}</td>`;
       }).join('');
-      return `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td></tr>`;
+      return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td></tr>`;
     }).join('');
     return;
   }
 
-  head.innerHTML = `<tr><th>Name</th><th>Grade</th><th>Sport</th><th>1st Week</th><th>2nd Week</th><th>3rd Week</th><th>4th Week</th><th>Present / Total</th></tr>`;
+  head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th><th>1st Week</th><th>2nd Week</th><th>3rd Week</th><th>4th Week</th><th>Present / Total</th></tr>`;
   if (roster.length === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="empty-state">No students match the current filters.</td></tr>';
+    body.innerHTML = '<tr><td colspan="10" class="empty-state">No students match the current filters.</td></tr>';
     return;
   }
-  body.innerHTML = roster.map((r) => {
+  body.innerHTML = roster.map((r, i) => {
     const weeks = (r.months || {})[filters.month] || {};
     const weekCells = ['1st', '2nd', '3rd', '4th'].map((w) => {
       const v = weeks[w];
@@ -372,7 +631,7 @@ function renderAttendanceTable() {
       const symbol = v === true ? '✓' : v === false ? '✕' : '–';
       return `<td><span class="mark ${cls}">${symbol}</span></td>`;
     }).join('');
-    return `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
+    return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
   }).join('');
 }
 
@@ -401,6 +660,46 @@ function renderChart() {
       plugins: { legend: { display: false } },
       scales: {
         y: { beginAtZero: true, max: 100, ticks: { color: '#8b93a7' }, grid: { color: '#272c3a' } },
+        x: { ticks: { color: '#8b93a7' }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// Coaches never see money (same rule as the fee amounts hidden throughout the
+// Student Profile / Attendance-mark fee pills) — the whole panel is gated off.
+function renderIncomeChart() {
+  const panel = el('income-chart-panel');
+  if (isCoach()) { panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+
+  const months = [...new Set(allFees.map((f) => f.month))].filter(Boolean).sort();
+  const data = months.map((m) => allFees
+    .filter((f) => f.month === m && f.status === 'paid')
+    .reduce((sum, f) => sum + (Number(f.amount) || 0), 0));
+  const labels = months.map(formatMonthLabel);
+
+  const ctx = el('income-chart').getContext('2d');
+  if (incomeChart) incomeChart.destroy();
+  incomeChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Income (Rs.)', data, backgroundColor: '#22c58b', borderRadius: 6, maxBarThickness: 56 }] },
+    options: {
+      responsive: true,
+      // This panel is full-width (unlike the paired attendance chart, which sits
+      // in a two-column grid) — without this, Chart.js's default aspectRatio of 2
+      // computes height from that full width, rendering a wildly oversized chart.
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx2) => `Rs. ${ctx2.parsed.y.toLocaleString()}` } },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#8b93a7', callback: (v) => `Rs. ${Number(v).toLocaleString()}` },
+          grid: { color: '#272c3a' },
+        },
         x: { ticks: { color: '#8b93a7' }, grid: { display: false } },
       },
     },

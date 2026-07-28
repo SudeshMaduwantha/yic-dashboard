@@ -50,6 +50,28 @@ export function initAttendanceUI() {
       btn.disabled = false;
     }
   });
+
+  el('add-sport-student').addEventListener('change', () => renderAddSportChecks(el('add-sport-student').value));
+
+  el('add-sport-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = el('add-sport-student').value;
+    const sportsToAdd = [...el('add-sport-checks').querySelectorAll('input:checked')].map((c) => c.value);
+    if (!name || sportsToAdd.length === 0) return;
+    const existing = allStudents.find((s) => s.name === name) || {};
+    const { grade, studentCode, phone } = existing;
+    const btn = el('add-sport-submit');
+    btn.disabled = true;
+    try {
+      for (const sport of sportsToAdd) {
+        await addStudent({ name, grade, sport, studentCode, phone });
+      }
+      el('add-sport-student').value = '';
+      renderAddSportChecks('');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 export function updateAttendanceData(students) {
@@ -66,6 +88,14 @@ export function updateAttendanceData(students) {
   sportSelect.disabled = regSports.length <= 1;
 
   renderRegSportChecks(el('reg-name').value.trim());
+
+  const names = [...new Set(students.map((s) => s.name))].sort((a, b) => a.localeCompare(b));
+  const studentSelect = el('add-sport-student');
+  const prevName = studentSelect.value;
+  studentSelect.innerHTML = '<option value="">Pick a student…</option>' +
+    names.map((n) => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
+  studentSelect.value = names.includes(prevName) ? prevName : '';
+  renderAddSportChecks(studentSelect.value);
 
   renderList();
 }
@@ -88,6 +118,32 @@ function renderRegSportChecks(name) {
       </label>
     `;
   }).join('');
+}
+
+// Only offers sports this student isn't already registered in — the whole
+// point of this section is adding to an existing student, never duplicating.
+function renderAddSportChecks(name) {
+  const wrap = el('add-sport-checks');
+  const btn = el('add-sport-submit');
+  if (!name) {
+    wrap.innerHTML = '<div class="empty-state">Pick a student first.</div>';
+    btn.disabled = true;
+    return;
+  }
+  const already = new Set(allStudents.filter((s) => s.name === name).map((s) => s.sport));
+  const available = regSports.filter((sport) => !already.has(sport));
+  if (available.length === 0) {
+    wrap.innerHTML = '<div class="empty-state">Already registered for every available sport.</div>';
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  wrap.innerHTML = available.map((sport) => `
+    <label class="reg-sport-check">
+      <input type="checkbox" value="${escapeAttr(sport)}" />
+      ${escapeHtml(sport)}
+    </label>
+  `).join('');
 }
 
 function renderList() {

@@ -60,7 +60,7 @@ service cloud.firestore {
       allow create: if isSuperAdmin() || (isCoach() && request.resource.data.sport in mySports());
       allow update: if isSuperAdmin() || isAdministrator()
         || (isCoach() && resource.data.sport in mySports() && request.resource.data.sport in mySports());
-      allow delete: if isSuperAdmin();
+      allow delete: if isSuperAdmin() || isAdministrator();
     }
 
     // Fee ledger. Administrators can fully manage it. Coaches can only read records for
@@ -74,6 +74,13 @@ service cloud.firestore {
     // Coach directory, one doc per sport. Any signed-in staff can see who runs a
     // sport; only Super Admin assigns/edits it.
     match /sport_coaches/{sport} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Standard monthly fee per sport, used to auto-fill the Add Record form.
+    // Administrators need to read it (they add fees) but only Super Admin sets it.
+    match /sport_fees/{sport} {
       allow read: if isSignedIn();
       allow write: if isSuperAdmin();
     }

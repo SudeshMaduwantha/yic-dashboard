@@ -2,6 +2,8 @@ export const WEEKS = ['1st', '2nd', '3rd', '4th'];
 
 export const KNOWN_SPORTS = ['Karate', 'Kabaddi', 'Netball & Basketball', 'Chess', 'Athletic'];
 
+export const ROLE_LABELS = { super_admin: 'Super Admin', administrator: 'Administrator', coach: 'Coach' };
+
 export const SPORT_LOGOS = {
   Karate: 'assets/logos/karate.jpeg',
   Kabaddi: 'assets/logos/kabaddi.jpeg',
@@ -64,6 +66,50 @@ export function monthRange(fromKey, toKey) {
     if (m > 12) { m = 1; y++; }
   }
   return keys;
+}
+
+// Themed replacement for window.confirm() — the native OS dialog can't be
+// restyled to match the app's dark theme, so this reuses the app's own
+// modal-overlay markup (#confirm-modal in index.html) instead.
+export function confirmDialog(message, { title = 'Are you sure?', okLabel = 'Delete' } = {}) {
+  return new Promise((resolve) => {
+    const modal = el('confirm-modal');
+    const okBtn = el('confirm-ok');
+    const cancelBtn = el('confirm-cancel');
+    el('confirm-title').textContent = title;
+    el('confirm-message').textContent = message;
+    okBtn.textContent = okLabel;
+    modal.classList.remove('hidden');
+
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onOverlay);
+      resolve(result);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onOverlay = (e) => { if (e.target === modal) cleanup(false); };
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.addEventListener('click', onOverlay);
+  });
+}
+
+// Builds the exact payload syncPublicProfile() needs for one person, from the
+// same allStudents/allFees shape every caller (Student Profile's manual sync,
+// the Fees Ledger's auto-sync, and its bulk "Sync to Web") already has in hand.
+export function buildPublicProfileSnapshot(name, allStudents, allFees) {
+  const registrations = allStudents.filter((s) => s.name === name);
+  const grade = registrations.find((s) => s.grade)?.grade || null;
+  const sports = registrations.map((s) => {
+    const pt = presentTotalForMonths(s.months, 'all');
+    return { sport: s.sport, present: pt.present, total: pt.total, pct: pt.total ? Math.round((pt.present / pt.total) * 100) : 0 };
+  });
+  const feeRecords = allFees.filter((f) => f.studentName === name)
+    .map((f) => ({ sport: f.sport, month: f.month, amount: f.amount, status: f.status }));
+  return { grade, sports, feeRecords };
 }
 
 export function allMonthKeys(students) {

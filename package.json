@@ -1,22 +1,44 @@
 {
   "name": "yic-dashboard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "YIC Sport School attendance & fees dashboard",
   "main": "main.js",
   "scripts": {
     "build": "node scripts/build.js",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "release": "npm run build && electron-builder --publish always"
   },
-  "author": "",
-  "license": "ISC",
+  "author": {
+    "name": "Sudesh Kumarasiri"
+  },
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SudeshMaduwantha/yic-dashboard.git"
+  },
   "build": {
     "appId": "com.yic.sportschool.dashboard",
+    "productName": "YIC Sport School",
+    "copyright": "Copyright © 2026 Yorkshire International College",
+    "npmRebuild": false,
+    "directories": {
+      "output": "C:\\Users\\sudes\\yic-dashboard-builds"
+    },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.png"
     },
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "license": "LICENSE.txt",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "files": [
       "main.js",
@@ -25,8 +47,9 @@
       "renderer/**/*"
     ],
     "publish": {
-      "provider": "generic",
-      "url": "https://yic-sport-school.web.app/updates/"
+      "provider": "github",
+      "owner": "SudeshMaduwantha",
+      "repo": "yic-dashboard"
     }
   },
   "dependencies": {

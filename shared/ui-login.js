@@ -99,6 +99,7 @@ export function initLoginUI({ onLogin, onLogout }) {
       return;
     }
 
+    role.uid = user.uid;
     setCurrentRole(role);
     el('login-screen').classList.add('hidden');
     el('bootstrap-screen').classList.add('hidden');

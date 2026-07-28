@@ -1,26 +1,98 @@
-import { el } from './utils.js';
-import { watchStudents, watchFees, watchSportCoaches, importStudent } from './firebase.js';
+import { el, ROLE_LABELS, confirmDialog } from './utils.js';
+import { watchStudents, watchFees, watchSportCoaches, watchSportFees, watchStaff, importStudent } from './firebase.js';
 import { initLoginUI } from './ui-login.js';
-import { initDashboardUI, updateDashboardData, updateDashboardFees, updateCoaches } from './ui-dashboard.js';
+import { initDashboardUI, updateDashboardData, updateDashboardFees, updateCoaches, updateStaffList, resetDashboardUI } from './ui-dashboard.js';
 import { initAttendanceUI, updateAttendanceData, updateAttendanceFees } from './ui-attendance.js';
-import { initFeesUI, updateFeesStudentData, updateFeesData } from './ui-fees.js';
+import { initFeesUI, updateFeesStudentData, updateFeesData, updateSportFees } from './ui-fees.js';
+import { initUpdatesUI } from './ui-updates.js';
 
 let unsubStudents = null;
 let unsubFees = null;
 let unsubCoaches = null;
+let unsubSportFees = null;
+let unsubStaff = null;
 let latestStudents = [];
 
-// ---------------- Tabs ----------------
-document.querySelectorAll('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-    btn.classList.add('active');
-    el(`tab-${btn.dataset.tab}`).classList.add('active');
+// ---------------- Sidebar version (desktop app only — window.api only exists there) ----------------
+if (typeof window.api !== 'undefined' && window.api.getAppVersion) {
+  window.api.getAppVersion().then((version) => {
+    el('sidebar-version').textContent = `v${version}`;
+    el('sidebar-version').classList.remove('hidden');
   });
+}
+
+// ---------------- Custom titlebar (desktop app only — window.api only exists there) ----------------
+if (typeof window.api !== 'undefined' && window.api.windowControls) {
+  el('custom-titlebar').classList.remove('hidden');
+  const { windowControls } = window.api;
+
+  el('win-min').addEventListener('click', () => windowControls.minimize());
+  el('win-max').addEventListener('click', () => windowControls.toggleMaximize());
+  el('win-close').addEventListener('click', async () => {
+    const confirmed = await confirmDialog('Are you sure you want to close YIC Sport School?', { title: 'Close app?', okLabel: 'Close' });
+    if (confirmed) windowControls.close();
+  });
+
+  const maxIcon = el('win-max').querySelector('svg');
+  const setMaxIcon = (isMax) => {
+    maxIcon.innerHTML = isMax
+      ? '<rect x="3" y="1.5" width="6" height="6" stroke="currentColor" stroke-width="1.1" fill="none"/><rect x="1.5" y="4" width="6" height="6" stroke="currentColor" stroke-width="1.1" fill="none"/>'
+      : '<rect x="2.5" y="2.5" width="7" height="7" stroke="currentColor" stroke-width="1.2" fill="none"/>';
+  };
+  windowControls.isMaximized().then(setMaxIcon);
+  windowControls.onMaximizeState(setMaxIcon);
+}
+
+// ---------------- Profile menu ----------------
+el('profile-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  el('profile-btn').closest('.profile-menu').classList.toggle('open');
+  el('profile-dropdown').classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+  const menu = el('profile-btn').closest('.profile-menu');
+  if (!menu.contains(e.target)) {
+    menu.classList.remove('open');
+    el('profile-dropdown').classList.add('hidden');
+  }
 });
 
-// Tabs/buttons each role is allowed to see. Super Admin sees everything.
+function roleLabel(role) {
+  if (role.role === 'coach') return `Coach — ${(role.sports || []).join(', ') || 'no sport assigned'}`;
+  return ROLE_LABELS[role.role] || role.role;
+}
+
+// ---------------- Sidebar navigation (sections + sub-tabs) ----------------
+// Each top-level sidebar section expands into its own set of sub-tabs, replacing
+// the old single-level tab bar so long pages (esp. Dashboard) split into smaller,
+// independently-scrollable chunks instead of one long stack.
+const SECTIONS = {
+  dashboard: ['dashboard-overview', 'dashboard-attendance-table', 'dashboard-student-profile', 'dashboard-staff-coaches'],
+  attendance: ['attendance-register', 'attendance-mark'],
+  fees: ['fees-add', 'fees-ledger', 'fees-report'],
+  updates: ['updates-main'],
+};
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+  document.querySelectorAll('.sidebar-subitem').forEach((b) => b.classList.remove('active'));
+  document.querySelectorAll('.sidebar-section-btn').forEach((b) => b.classList.remove('active'));
+  el(`tab-${tabId}`).classList.add('active');
+  const subitem = document.querySelector(`.sidebar-subitem[data-tab="${tabId}"]`);
+  if (subitem) {
+    subitem.classList.add('active');
+    subitem.closest('.sidebar-section').querySelector('.sidebar-section-btn').classList.add('active');
+  }
+}
+
+document.querySelectorAll('.sidebar-section-btn').forEach((btn) => {
+  btn.addEventListener('click', () => switchTab(SECTIONS[btn.dataset.sectionBtn][0]));
+});
+document.querySelectorAll('.sidebar-subitem').forEach((btn) => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+// Sections each role is allowed to see. Super Admin sees everything.
 const TAB_ACCESS = {
   super_admin: ['dashboard', 'attendance', 'fees'],
   administrator: ['dashboard', 'fees'],
@@ -28,28 +100,29 @@ const TAB_ACCESS = {
 };
 
 function applyRoleUI(role) {
-  const allowedTabs = TAB_ACCESS[role.role] || [];
+  const allowedSections = TAB_ACCESS[role.role] || [];
 
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    const allowed = allowedTabs.includes(btn.dataset.tab);
-    btn.classList.toggle('hidden', !allowed);
+  document.querySelectorAll('.sidebar-section').forEach((section) => {
+    // "updates" isn't role-gated — it's available to every logged-in role, and its
+    // visibility is instead controlled by ui-updates.js (desktop app vs. web build).
+    if (section.dataset.section === 'updates') return;
+    section.classList.toggle('hidden', !allowedSections.includes(section.dataset.section));
   });
-  // If the currently active tab isn't allowed for this role, jump to the first allowed one.
-  const activeBtn = document.querySelector('.tab-btn.active');
-  if (!activeBtn || !allowedTabs.includes(activeBtn.dataset.tab)) {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-    const firstBtn = document.querySelector(`.tab-btn[data-tab="${allowedTabs[0]}"]`);
-    if (firstBtn) {
-      firstBtn.classList.add('active');
-      el(`tab-${allowedTabs[0]}`).classList.add('active');
-    }
+  // If the currently active section isn't allowed for this role, jump to the first allowed one.
+  const activeSubitem = document.querySelector('.sidebar-subitem.active');
+  const activeSection = activeSubitem ? activeSubitem.closest('.sidebar-section').dataset.section : null;
+  if (!activeSection || !allowedSections.includes(activeSection)) {
+    switchTab(SECTIONS[allowedSections[0]][0]);
   }
 
   el('add-staff-btn').classList.toggle('hidden', role.role !== 'super_admin');
   if (typeof window.api !== 'undefined') {
     el('import-excel-btn').classList.toggle('hidden', role.role !== 'super_admin');
   }
+
+  el('profile-email').textContent = role.email || '';
+  el('profile-dropdown-email').textContent = role.email || '';
+  el('profile-dropdown-role').textContent = roleLabel(role);
 }
 
 initLoginUI({
@@ -64,27 +137,38 @@ initLoginUI({
     }, sportScope);
     if (role.role === 'super_admin' || role.role === 'administrator') {
       unsubFees = watchFees((fees) => { updateFeesData(fees); updateDashboardFees(fees); updateAttendanceFees(fees); });
+      unsubSportFees = watchSportFees((fees) => updateSportFees(fees));
     } else if (role.role === 'coach') {
-      // Coaches only get paid/unpaid status for their own sport(s) — never the amount,
-      // and never routed to the Fees Ledger / Dashboard fee views (they don't have access to those).
-      unsubFees = watchFees((fees) => updateAttendanceFees(fees), role.sports);
+      // Coaches get fee records for their own sport(s) too (for the Student Profile's
+      // paid/unpaid status), but the amount is never rendered for them — same rule as
+      // the Attendance tab's fee pill, enforced client-side in ui-dashboard.js.
+      unsubFees = watchFees((fees) => { updateDashboardFees(fees); updateAttendanceFees(fees); }, role.sports);
     }
     unsubCoaches = watchSportCoaches((coaches) => updateCoaches(coaches));
+    if (role.role === 'super_admin') {
+      unsubStaff = watchStaff((staff) => updateStaffList(staff));
+    }
   },
   onLogout: () => {
     if (unsubStudents) unsubStudents();
     if (unsubFees) unsubFees();
     if (unsubCoaches) unsubCoaches();
+    if (unsubStaff) unsubStaff();
+    if (unsubSportFees) unsubSportFees();
     unsubStudents = null;
     unsubFees = null;
     unsubCoaches = null;
+    unsubStaff = null;
+    unsubSportFees = null;
     latestStudents = [];
+    resetDashboardUI();
   },
 });
 
 initDashboardUI();
 initAttendanceUI();
 initFeesUI();
+initUpdatesUI();
 
 // ---------------- Desktop-only: one-time Excel import ----------------
 // Note: window.prompt()/alert() aren't reliably supported in Electron's renderer,

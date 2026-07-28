@@ -44,6 +44,23 @@ export async function createStaffAccount(email, password, role, sports) {
   });
 }
 
+// ---------------- Staff accounts ----------------
+export function watchStaff(callback) {
+  return onSnapshot(collection(db, 'users'), (snap) => {
+    callback(snap.docs.map((d) => ({ uid: d.id, ...d.data() })));
+  });
+}
+
+// Removes the staff member's role document, which revokes all app access under
+// the Firestore rules (every rule checks this doc). The underlying Firebase Auth
+// account itself isn't deleted — that requires the Admin SDK/Blaze plan, which
+// this project doesn't have — but without a role doc they can sign in and do
+// nothing. Delete the Auth account too from Firebase Console if the email needs
+// to be freed up for reuse.
+export function deleteStaffAccount(uid) {
+  return deleteDoc(doc(db, 'users', uid));
+}
+
 // ---------------- Roles ----------------
 export async function getMyRole() {
   if (!auth.currentUser) return null;
@@ -136,6 +153,27 @@ export async function saveAttendanceBatch(changes) {
   return batch.commit();
 }
 
+// Removes every sport-registration doc for one person plus everything that hangs
+// off them (fee records, the Student ID->PIN meta doc, and any public lookup
+// snapshot) so a deleted student doesn't leave orphaned rows behind.
+export async function deleteStudent(studentIds, studentCode) {
+  const batch = writeBatch(db);
+  studentIds.forEach((id) => batch.delete(doc(db, 'students', id)));
+
+  const feeSnaps = await Promise.all(
+    studentIds.map((id) => getDocs(query(collection(db, 'fees'), where('studentId', '==', id)))),
+  );
+  feeSnaps.forEach((snap) => snap.forEach((feeDoc) => batch.delete(feeDoc.ref)));
+
+  if (studentCode) {
+    const meta = await getStudentMeta(studentCode);
+    if (meta && meta.pin) batch.delete(doc(db, 'public_lookup', publicLookupKey(studentCode, meta.pin)));
+    batch.delete(doc(db, 'student_meta', studentCode));
+  }
+
+  await batch.commit();
+}
+
 export async function importStudent({ name, grade, sport, months }) {
   // Used by the one-time Excel import: merge into an existing student (same name+sport) or create new.
   const q = query(collection(db, 'students'), where('name', '==', name), where('sport', '==', sport));
@@ -175,8 +213,19 @@ export function watchSportCoaches(callback) {
   });
 }
 
-export function setSportCoach(sport, { name, phone }) {
-  return setDoc(doc(db, 'sport_coaches', sport), { name: name || null, phone: phone || null }, { merge: true });
+export function setSportCoach(sport, { name, phone, email }) {
+  return setDoc(doc(db, 'sport_coaches', sport), { name: name || null, phone: phone || null, email: email || null }, { merge: true });
+}
+
+// ---------------- Sport fees (standard monthly amount per sport) ----------------
+export function watchSportFees(callback) {
+  return onSnapshot(collection(db, 'sport_fees'), (snap) => {
+    callback(snap.docs.map((d) => ({ sport: d.id, ...d.data() })));
+  });
+}
+
+export function setSportFee(sport, amount) {
+  return setDoc(doc(db, 'sport_fees', sport), { amount: Number(amount) || 0 }, { merge: true });
 }
 
 // ---------------- Student meta (Student ID -> PIN) + public lookup ----------------
@@ -187,6 +236,11 @@ export async function getStudentMeta(studentCode) {
 
 export function setStudentMeta(studentCode, { pin, name }) {
   return setDoc(doc(db, 'student_meta', studentCode), { studentCode, pin, name }, { merge: true });
+}
+
+export async function getAllStudentMeta() {
+  const snap = await getDocs(collection(db, 'student_meta'));
+  return snap.docs.map((d) => d.data());
 }
 
 function publicLookupKey(studentCode, pin) {

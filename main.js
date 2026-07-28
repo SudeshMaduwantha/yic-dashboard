@@ -1,7 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const { autoUpdater } = require('electron-updater');
 const { parseWorkbookFile } = require('./src/data-sync');
+
+// No default File/Edit/View/Window menu — the custom in-page titlebar replaces it.
+Menu.setApplicationMenu(null);
 
 let mainWindow;
 
@@ -10,6 +13,8 @@ function createWindow() {
     width: 1400,
     height: 900,
     backgroundColor: '#0f1115',
+    frame: false,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -17,32 +22,57 @@ function createWindow() {
     },
   });
   mainWindow.loadFile('renderer/index.html');
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize();
+    mainWindow.show();
+  });
+
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximize-state', true));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximize-state', false));
+
 }
 
-// Checks the update feed (see package.json "build.publish") and, if a newer
-// version is found, downloads it and asks to restart. No-op when running
-// unpackaged (`npm start`) — there's no update metadata to check against then.
+ipcMain.on('window:minimize', () => mainWindow.minimize());
+ipcMain.on('window:toggle-maximize', () => {
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
+ipcMain.on('window:close', () => mainWindow.close());
+ipcMain.handle('window:is-maximized', () => mainWindow.isMaximized());
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
+// Checks the update feed (see package.json "build.publish" — GitHub Releases on
+// SudeshMaduwantha/yic-dashboard) and, if a newer version is found, downloads it.
+// Status is forwarded to the renderer's Updates tab instead of a native dialog,
+// so installing never interrupts whatever the user is doing until they choose to.
+// No-op when running unpackaged (`npm start`) — there's no update metadata then.
+function sendUpdateStatus(status) {
+  if (mainWindow) mainWindow.webContents.send('updates:status', status);
+}
+
 function setupAutoUpdater() {
   if (!app.isPackaged) return;
 
-  autoUpdater.on('update-downloaded', () => {
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Update ready',
-      message: 'A new version of YIC Sport School has been downloaded. Restart now to apply it?',
-      buttons: ['Restart now', 'Later'],
-      defaultId: 0,
-    }).then((result) => {
-      if (result.response === 0) autoUpdater.quitAndInstall();
-    });
-  });
-
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus({ state: 'checking' }));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus({ state: 'available', version: info.version }));
+  autoUpdater.on('update-not-available', () => sendUpdateStatus({ state: 'not-available' }));
+  autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ state: 'downloading', percent: Math.round(progress.percent) }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'downloaded', version: info.version }));
   autoUpdater.on('error', (err) => {
     console.error('Auto-update check failed:', err);
+    sendUpdateStatus({ state: 'error', message: err.message });
   });
 
   autoUpdater.checkForUpdates();
 }
+
+ipcMain.handle('updates:check', () => {
+  if (!app.isPackaged) return { state: 'dev' };
+  autoUpdater.checkForUpdates();
+  return { state: 'checking' };
+});
+ipcMain.on('updates:install', () => autoUpdater.quitAndInstall());
 
 app.whenReady().then(() => {
   createWindow();
