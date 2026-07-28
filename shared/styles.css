@@ -240,6 +240,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 }
 .mini-sport-name { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
 .mini-sport-card .pct { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+.mini-sport-card.selectable { cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; }
+.mini-sport-card.selectable:hover { border-color: var(--accent); }
+.mini-sport-card.selectable.active { border-color: var(--accent); background: rgba(245,148,31,0.12); }
+.mini-sport-card.all-sports { display: flex; align-items: center; justify-content: center; min-width: 110px; flex: 0; }
+.mini-sport-card.all-sports .mini-sport-name { margin-bottom: 0; }
 .student-summary-contact { font-size: 13px; color: var(--text-dim); margin: -8px 0 14px; }
 .student-summary-fees { display: flex; gap: 10px; flex-wrap: wrap; }
 .fee-summary-pill {
@@ -306,6 +311,7 @@ tbody tr:hover { background: rgba(30,41,90,0.04); }
 .mark.unmarked { background: #eef0f6; color: var(--text-dim); }
 
 .table-panel { margin-bottom: 20px; }
+.table-total-count { text-transform: none; letter-spacing: normal; font-weight: 600; color: var(--accent-2); margin-left: 6px; }
 
 .fee-form { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
 .reg-sports-group { min-width: 260px; }
@@ -322,6 +328,14 @@ tbody tr:hover { background: rgba(30,41,90,0.04); }
   transition: filter 0.15s ease, transform 0.15s ease;
 }
 .primary-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.primary-btn:disabled { opacity: 0.6; cursor: default; filter: none; transform: none; }
+
+.updates-notes {
+  margin-top: 14px; padding: 14px 16px; background: var(--panel-2);
+  border: 1px solid var(--panel-border); border-radius: var(--radius); max-width: 520px;
+}
+.updates-notes-title { font-size: 12px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.updates-notes-body { font-size: 13px; color: var(--text); white-space: pre-wrap; line-height: 1.5; }
 
 .fees-form-panel { margin-bottom: 20px; }
 

@@ -7,11 +7,21 @@ function applyStatus(status) {
   const progressWrap = el('updates-progress-wrap');
   const progressBar = el('updates-progress-bar');
   const badge = el('updates-badge');
+  const notesWrap = el('updates-notes-wrap');
+  const notesBody = el('updates-notes-body');
 
   progressWrap.classList.add('hidden');
   installBtn.classList.add('hidden');
   badge.classList.add('hidden');
   checkBtn.disabled = false;
+
+  if (status.notes) {
+    notesWrap.classList.remove('hidden');
+    notesBody.textContent = status.notes;
+  } else {
+    notesWrap.classList.add('hidden');
+    notesBody.textContent = '';
+  }
 
   switch (status.state) {
     case 'checking':

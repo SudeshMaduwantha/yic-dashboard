@@ -51,14 +51,24 @@ function sendUpdateStatus(status) {
   if (mainWindow) mainWindow.webContents.send('updates:status', status);
 }
 
+// info.releaseNotes is the GitHub release body — a plain string for a single
+// release, or an array of {version, note} when electron-updater collapses
+// several skipped releases into one update. Normalize to one string.
+function formatReleaseNotes(info) {
+  const notes = info.releaseNotes;
+  if (!notes) return '';
+  if (typeof notes === 'string') return notes;
+  return notes.map((n) => n.note).filter(Boolean).join('\n\n');
+}
+
 function setupAutoUpdater() {
   if (!app.isPackaged) return;
 
   autoUpdater.on('checking-for-update', () => sendUpdateStatus({ state: 'checking' }));
-  autoUpdater.on('update-available', (info) => sendUpdateStatus({ state: 'available', version: info.version }));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus({ state: 'available', version: info.version, notes: formatReleaseNotes(info) }));
   autoUpdater.on('update-not-available', () => sendUpdateStatus({ state: 'not-available' }));
   autoUpdater.on('download-progress', (progress) => sendUpdateStatus({ state: 'downloading', percent: Math.round(progress.percent) }));
-  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'downloaded', version: info.version }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'downloaded', version: info.version, notes: formatReleaseNotes(info) }));
   autoUpdater.on('error', (err) => {
     console.error('Auto-update check failed:', err);
     sendUpdateStatus({ state: 'error', message: err.message });

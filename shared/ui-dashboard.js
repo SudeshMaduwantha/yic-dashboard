@@ -1,4 +1,5 @@
 import { Chart, BarController, CategoryScale, LinearScale, BarElement } from 'chart.js';
+import ExcelJS from 'exceljs';
 import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, confirmDialog, buildPublicProfileSnapshot } from './utils.js';
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
 import {
@@ -20,6 +21,10 @@ let allStaff = [];
 const filters = { sport: 'all', grade: 'all', month: 'all', search: '' };
 const profileFilters = { sport: 'all', grade: 'all' };
 let detailStudentQuery = null; // set by openStudentDetail() — what "View Attendance" searches for
+// Which of the selected student's own sports the profile's fee table is narrowed
+// to — separate from profileFilters.sport above, which only narrows the student
+// picker. Reset to 'all' whenever the picked student changes.
+let summarySport = 'all';
 
 // Overview and the Attendance Table sub-tab each have their own copy of the
 // sport/grade/month/search controls but share one `filters` state — this keeps
@@ -49,11 +54,12 @@ export function initDashboardUI() {
 
   el('student-profile-filter-sport').addEventListener('change', (e) => { profileFilters.sport = e.target.value; renderProfileFilterStudents(); });
   el('student-profile-filter-grade').addEventListener('change', (e) => { profileFilters.grade = e.target.value; renderProfileFilterStudents(); });
-  el('student-filter').addEventListener('change', renderStudentSummary);
+  el('student-filter').addEventListener('change', () => { summarySport = 'all'; renderStudentSummary(); });
   el('student-manage-save').addEventListener('click', () => saveStudentChanges(false));
   el('student-manage-sync').addEventListener('click', () => saveStudentChanges(true));
   el('student-manage-delete').addEventListener('click', deleteCurrentStudent);
   el('export-ids-btn').addEventListener('click', exportStudentIdsAndPins);
+  el('att-table-export-btn').addEventListener('click', exportAttendanceToExcel);
   el('student-detail-close').addEventListener('click', closeStudentDetail);
   el('student-detail-modal').addEventListener('click', (e) => {
     if (e.target.id === 'student-detail-modal') closeStudentDetail();
@@ -332,17 +338,31 @@ function renderStudentSummary() {
     ? `<svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg> ${escapeHtml(phone)}`
     : '';
 
-  el('student-summary-sports').innerHTML = registrations.map((s) => {
+  // Reset the sport narrowing if it no longer matches one of this student's
+  // registrations (e.g. stale selection left over from a previously viewed student).
+  if (summarySport !== 'all' && !registrations.some((s) => s.sport === summarySport)) summarySport = 'all';
+
+  const allChip = registrations.length > 1
+    ? `<div class="mini-sport-card selectable all-sports${summarySport === 'all' ? ' active' : ''}" data-sport="all">
+        <div class="mini-sport-name">All sports</div>
+      </div>`
+    : '';
+  el('student-summary-sports').innerHTML = allChip + (registrations.map((s) => {
     const pt = presentTotalForMonths(s.months, 'all');
     const pct = pt.total ? Math.round((pt.present / pt.total) * 100) : 0;
+    const active = summarySport === s.sport ? ' active' : '';
     return `
-      <div class="mini-sport-card">
+      <div class="mini-sport-card selectable${active}" data-sport="${escapeAttr(s.sport)}">
         <div class="mini-sport-name">${escapeHtml(s.sport)}</div>
         <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
         <div class="pct">${pt.present}/${pt.total} weeks · ${pct}%</div>
       </div>
     `;
-  }).join('') || '<div class="empty-state">Not registered for any sport.</div>';
+  }).join('') || '<div class="empty-state">Not registered for any sport.</div>');
+
+  el('student-summary-sports').querySelectorAll('.mini-sport-card.selectable').forEach((card) => {
+    card.addEventListener('click', () => { summarySport = card.dataset.sport; renderStudentSummary(); });
+  });
 
   const manageSection = el('student-manage-section');
   manageSection.classList.toggle('hidden', !canManageStudents());
@@ -366,7 +386,7 @@ function renderStudentSummary() {
     el('student-summary-fee-table').classList.add('hidden');
     return;
   }
-  const records = allFees.filter((f) => f.studentName === name);
+  const records = allFees.filter((f) => f.studentName === name && (summarySport === 'all' || f.sport === summarySport));
   const showAmounts = !isCoach();
 
   // Coaches only ever see paid/unpaid status, never amounts — same rule the
@@ -600,6 +620,7 @@ function renderAttendanceTable() {
   const roster = getFlatRoster();
   const head = el('attendance-table-head');
   const body = el('attendance-table-body');
+  el('att-table-total-count').textContent = `Total students: ${roster.length}`;
 
   if (filters.month === 'all') {
     const months = allMonthKeys(allStudents);
@@ -633,6 +654,83 @@ function renderAttendanceTable() {
     }).join('');
     return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
   }).join('');
+}
+
+// Mirrors renderAttendanceTable()'s two layouts, over whatever getFlatRoster()
+// currently returns — so the export always matches the sport/grade/month/search
+// filters applied on screen.
+async function exportAttendanceToExcel() {
+  const btn = el('att-table-export-btn');
+  const label = el('att-table-export-btn-label');
+  btn.disabled = true;
+  label.textContent = 'Exporting…';
+  try {
+    const roster = getFlatRoster();
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Attendance');
+
+    if (filters.month === 'all') {
+      const months = allMonthKeys(allStudents);
+      sheet.columns = [
+        { header: 'No.', key: 'no', width: 6 },
+        { header: 'Student ID', key: 'studentCode', width: 14 },
+        { header: 'Name', key: 'name', width: 28 },
+        { header: 'Grade', key: 'grade', width: 10 },
+        { header: 'Sport', key: 'sport', width: 18 },
+        ...months.map((m) => ({ header: formatMonthLabel(m), key: m, width: 12 })),
+        { header: 'Overall', key: 'overall', width: 12 },
+      ];
+      sheet.getRow(1).font = { bold: true };
+      roster.forEach((r, i) => {
+        const row = {
+          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade || '', sport: r.sport,
+          overall: `${r.present}/${r.total}`,
+        };
+        months.forEach((m) => {
+          const pt = presentTotalForMonths(r.months, m);
+          row[m] = pt.total ? `${pt.present}/${pt.total}` : '—';
+        });
+        sheet.addRow(row);
+      });
+    } else {
+      sheet.columns = [
+        { header: 'No.', key: 'no', width: 6 },
+        { header: 'Student ID', key: 'studentCode', width: 14 },
+        { header: 'Name', key: 'name', width: 28 },
+        { header: 'Grade', key: 'grade', width: 10 },
+        { header: 'Sport', key: 'sport', width: 18 },
+        { header: '1st Week', key: 'w1', width: 10 },
+        { header: '2nd Week', key: 'w2', width: 10 },
+        { header: '3rd Week', key: 'w3', width: 10 },
+        { header: '4th Week', key: 'w4', width: 10 },
+        { header: 'Present / Total', key: 'overall', width: 14 },
+      ];
+      sheet.getRow(1).font = { bold: true };
+      roster.forEach((r, i) => {
+        const weeks = (r.months || {})[filters.month] || {};
+        const symbol = (v) => (v === true ? 'Present' : v === false ? 'Absent' : '—');
+        sheet.addRow({
+          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade || '', sport: r.sport,
+          w1: symbol(weeks['1st']), w2: symbol(weeks['2nd']), w3: symbol(weeks['3rd']), w4: symbol(weeks['4th']),
+          overall: `${r.present}/${r.total}`,
+        });
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `attendance-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Export to Excel';
+  }
 }
 
 function renderChart() {
