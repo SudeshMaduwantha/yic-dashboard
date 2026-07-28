@@ -1,4 +1,6 @@
-export const WEEKS = ['1st', '2nd', '3rd', '4th'];
+// Most months have 4 occurrences of a given weekday, but some have 5 (e.g. 5
+// Saturdays) — '5th' is a real, if less common, key in a month's weeks object.
+export const WEEKS = ['1st', '2nd', '3rd', '4th', '5th'];
 
 export const KNOWN_SPORTS = ['Karate', 'Kabaddi', 'Netball & Basketball', 'Chess', 'Athletic'];
 

@@ -1,6 +1,6 @@
 import { Chart, BarController, CategoryScale, LinearScale, BarElement } from 'chart.js';
 import ExcelJS from 'exceljs';
-import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, confirmDialog, buildPublicProfileSnapshot } from './utils.js';
+import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, WEEKS, confirmDialog, buildPublicProfileSnapshot } from './utils.js';
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
 import {
   updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile,
@@ -616,6 +616,14 @@ function renderRoster() {
   });
 }
 
+// '5th' only exists in a month's data when that sport's class day actually
+// happened a 5th time that month — show the column only then, so ordinary
+// 4-week months don't carry a permanently empty 5th column.
+function weeksForMonth(roster, monthKey) {
+  const hasFifth = roster.some((r) => ((r.months || {})[monthKey] || {})['5th'] !== undefined);
+  return hasFifth ? WEEKS : WEEKS.slice(0, 4);
+}
+
 function renderAttendanceTable() {
   const roster = getFlatRoster();
   const head = el('attendance-table-head');
@@ -639,14 +647,15 @@ function renderAttendanceTable() {
     return;
   }
 
-  head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th><th>1st Week</th><th>2nd Week</th><th>3rd Week</th><th>4th Week</th><th>Present / Total</th></tr>`;
+  const weeksToShow = weeksForMonth(roster, filters.month);
+  head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${weeksToShow.map((w) => `<th>${w} Week</th>`).join('')}<th>Present / Total</th></tr>`;
   if (roster.length === 0) {
-    body.innerHTML = '<tr><td colspan="10" class="empty-state">No students match the current filters.</td></tr>';
+    body.innerHTML = `<tr><td colspan="${6 + weeksToShow.length}" class="empty-state">No students match the current filters.</td></tr>`;
     return;
   }
   body.innerHTML = roster.map((r, i) => {
     const weeks = (r.months || {})[filters.month] || {};
-    const weekCells = ['1st', '2nd', '3rd', '4th'].map((w) => {
+    const weekCells = weeksToShow.map((w) => {
       const v = weeks[w];
       const cls = v === true ? 'present' : v === false ? 'absent' : 'unmarked';
       const symbol = v === true ? '✓' : v === false ? '✕' : '–';
@@ -693,27 +702,26 @@ async function exportAttendanceToExcel() {
         sheet.addRow(row);
       });
     } else {
+      const weeksToShow = weeksForMonth(roster, filters.month);
       sheet.columns = [
         { header: 'No.', key: 'no', width: 6 },
         { header: 'Student ID', key: 'studentCode', width: 14 },
         { header: 'Name', key: 'name', width: 28 },
         { header: 'Grade', key: 'grade', width: 10 },
         { header: 'Sport', key: 'sport', width: 18 },
-        { header: '1st Week', key: 'w1', width: 10 },
-        { header: '2nd Week', key: 'w2', width: 10 },
-        { header: '3rd Week', key: 'w3', width: 10 },
-        { header: '4th Week', key: 'w4', width: 10 },
+        ...weeksToShow.map((w) => ({ header: `${w} Week`, key: w, width: 10 })),
         { header: 'Present / Total', key: 'overall', width: 14 },
       ];
       sheet.getRow(1).font = { bold: true };
       roster.forEach((r, i) => {
         const weeks = (r.months || {})[filters.month] || {};
         const symbol = (v) => (v === true ? 'Present' : v === false ? 'Absent' : '—');
-        sheet.addRow({
+        const row = {
           no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade || '', sport: r.sport,
-          w1: symbol(weeks['1st']), w2: symbol(weeks['2nd']), w3: symbol(weeks['3rd']), w4: symbol(weeks['4th']),
           overall: `${r.present}/${r.total}`,
-        });
+        };
+        weeksToShow.forEach((w) => { row[w] = symbol(weeks[w]); });
+        sheet.addRow(row);
       });
     }
 
