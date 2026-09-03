@@ -685,8 +685,17 @@ function renderStats() {
   const avgAttendance = totalMarked ? Math.round((totalPresent / totalMarked) * 100) : 0;
   const perfectAttendance = roster.filter((r) => r.total > 0 && r.present === r.total).length;
 
+  // roster has one row per sport-registration, so a student playing two sports is
+  // counted twice in roster.length. This collapses those to a head-count of
+  // distinct people — keyed on Student ID where set, name otherwise — matching
+  // whatever sport/grade/search filters are currently applied.
+  const individualStudents = new Set(
+    roster.map((r) => (r.studentCode ? `id:${r.studentCode}` : `name:${r.name.toLowerCase()}`)),
+  ).size;
+
   const stats = [
-    { label: 'Students shown', value: roster.length },
+    { label: 'Individual students', value: individualStudents },
+    { label: 'Registrations shown', value: roster.length },
     { label: 'Sports', value: new Set(allStudents.map((s) => s.sport)).size },
     { label: 'Avg. attendance', value: `${avgAttendance}%` },
     { label: 'Perfect attendance', value: perfectAttendance },
