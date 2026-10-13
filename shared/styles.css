@@ -231,6 +231,22 @@ select, input {
 }
 select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 
+/* Type-to-search student picker (shared/searchable-select.js) */
+.ss-wrap { position: relative; min-width: 260px; }
+.ss-input {
+  width: 100%; box-sizing: border-box; padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23667' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.ss-list {
+  position: absolute; z-index: 50; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 260px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; box-shadow: var(--shadow);
+}
+.ss-item { padding: 8px 10px; font-size: 13px; color: var(--text); cursor: pointer; }
+.ss-item.active, .ss-item:hover { background: var(--accent-dim); }
+.ss-empty { padding: 8px 10px; font-size: 13px; color: var(--text-dim); }
+
 .student-summary-panel { margin-bottom: 22px; border-color: var(--accent); }
 .student-summary-panel h2 { color: var(--text); font-size: 16px; text-transform: none; letter-spacing: normal; }
 .student-summary-sports { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }

@@ -12,7 +12,9 @@ let pending = new Map();
 export function initAttendanceUI() {
   el('att-month').value = currentMonthKey();
 
-  el('att-sport').addEventListener('change', renderList);
+  el('att-sport').addEventListener('change', () => { renderAttGradeOptions(); renderList(); });
+  // Grade only narrows which rows are visible — unsaved marks for other grades are kept.
+  el('att-grade').addEventListener('change', () => renderList({ keepPending: true }));
   el('att-month').addEventListener('change', renderList);
   el('att-week').addEventListener('change', renderList);
 
@@ -27,6 +29,8 @@ export function initAttendanceUI() {
       if (!el('reg-student-id').value.trim() && existing.studentCode) el('reg-student-id').value = existing.studentCode;
       if (!el('reg-phone').value.trim() && existing.phone) el('reg-phone').value = existing.phone;
     }
+    const withGrade = allStudents.find((s) => s.name === name && s.grade);
+    if (withGrade && !el('reg-grade').value) el('reg-grade').value = String(withGrade.grade).trim();
     renderRegSportChecks(name);
   });
 
@@ -50,6 +54,8 @@ export function initAttendanceUI() {
       btn.disabled = false;
     }
   });
+
+  el('add-sport-grade').addEventListener('change', renderAddSportStudents);
 
   el('add-sport-student').addEventListener('change', () => renderAddSportChecks(el('add-sport-student').value));
 
@@ -89,15 +95,54 @@ export function updateAttendanceData(students) {
 
   renderRegSportChecks(el('reg-name').value.trim());
 
-  const names = [...new Set(students.map((s) => s.name))].sort((a, b) => a.localeCompare(b));
+  // Register form: standard grades 1-13 plus anything already in the data (e.g. "4+").
+  const regGrade = el('reg-grade');
+  const prevRegGrade = regGrade.value;
+  const regGrades = sortGrades([...Array.from({ length: 13 }, (_, i) => String(i + 1)), ...gradesOf(students)]);
+  regGrade.innerHTML = '<option value="">Select grade…</option>' +
+    regGrades.map((g) => `<option value="${escapeAttr(g)}">Grade ${escapeHtml(g)}</option>`).join('');
+  regGrade.value = regGrades.includes(prevRegGrade) ? prevRegGrade : '';
+
+  setGradeOptions(el('add-sport-grade'), gradesOf(students));
+  renderAddSportStudents();
+
+  renderAttGradeOptions();
+  renderList();
+}
+
+function gradesOf(students) {
+  return sortGrades(students.map((s) => String(s.grade || '').trim()).filter(Boolean));
+}
+
+// Numeric-aware so "10" sorts after "9", not after "1".
+function sortGrades(grades) {
+  return [...new Set(grades)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function setGradeOptions(select, grades) {
+  const prev = select.value;
+  select.innerHTML = '<option value="all">All grades</option>' +
+    grades.map((g) => `<option value="${escapeAttr(g)}">Grade ${escapeHtml(g)}</option>`).join('');
+  select.value = grades.includes(prev) ? prev : 'all';
+}
+
+// Mark Attendance only offers grades that actually exist in the chosen sport.
+function renderAttGradeOptions() {
+  const sport = el('att-sport').value;
+  setGradeOptions(el('att-grade'), gradesOf(allStudents.filter((s) => s.sport === sport)));
+}
+
+function renderAddSportStudents() {
+  const grade = el('add-sport-grade').value;
+  const names = [...new Set(allStudents
+    .filter((s) => grade === 'all' || String(s.grade || '').trim() === grade)
+    .map((s) => s.name))].sort((a, b) => a.localeCompare(b));
   const studentSelect = el('add-sport-student');
   const prevName = studentSelect.value;
   studentSelect.innerHTML = '<option value="">Pick a student…</option>' +
     names.map((n) => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
   studentSelect.value = names.includes(prevName) ? prevName : '';
   renderAddSportChecks(studentSelect.value);
-
-  renderList();
 }
 
 export function updateAttendanceFees(fees) {
@@ -146,24 +191,29 @@ function renderAddSportChecks(name) {
   `).join('');
 }
 
-function renderList() {
+function renderList({ keepPending = false } = {}) {
   const sport = el('att-sport').value;
+  const grade = el('att-grade').value;
   const list = el('att-list');
-  pending = new Map();
+  if (!keepPending) pending = new Map();
 
-  const students = allStudents.filter((s) => s.sport === sport).sort((a, b) => a.name.localeCompare(b.name));
+  const inSport = allStudents.filter((s) => s.sport === sport);
+  const students = inSport
+    .filter((s) => grade === 'all' || String(s.grade || '').trim() === grade)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  el('att-save-btn').disabled = students.length === 0 && pending.size === 0;
   if (students.length === 0) {
-    list.innerHTML = '<div class="empty-state">No students registered for this sport yet — add one above.</div>';
-    el('att-save-btn').disabled = true;
+    list.innerHTML = inSport.length
+      ? '<div class="empty-state">No students in this grade for this sport.</div>'
+      : '<div class="empty-state">No students registered for this sport yet — add one above.</div>';
     return;
   }
-  el('att-save-btn').disabled = false;
 
   const monthKey = el('att-month').value || currentMonthKey();
   const week = el('att-week').value;
 
   list.innerHTML = students.map((s) => {
-    const saved = ((s.months || {})[monthKey] || {})[week];
+    const saved = pending.has(s.id) ? pending.get(s.id) : ((s.months || {})[monthKey] || {})[week];
     const state = saved === true ? 'present' : saved === false ? 'absent' : 'unmarked';
     const feePill = feesAvailable ? feeStatusPill(s, monthKey) : '';
     return `

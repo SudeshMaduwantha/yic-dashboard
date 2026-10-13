@@ -5,6 +5,7 @@ import { initDashboardUI, updateDashboardData, updateDashboardFees, updateCoache
 import { initAttendanceUI, updateAttendanceData, updateAttendanceFees } from './ui-attendance.js';
 import { initFeesUI, updateFeesStudentData, updateFeesData, updateSportFees } from './ui-fees.js';
 import { initUpdatesUI } from './ui-updates.js';
+import { makeSearchable } from './searchable-select.js';
 
 let unsubStudents = null;
 let unsubFees = null;
@@ -169,6 +170,8 @@ initDashboardUI();
 initAttendanceUI();
 initFeesUI();
 initUpdatesUI();
+// Long student pickers: type to search instead of scrolling the whole list.
+['student-filter', 'add-sport-student', 'fee-student'].forEach((id) => makeSearchable(el(id)));
 
 // ---------------- Desktop-only: one-time Excel import ----------------
 // Note: window.prompt()/alert() aren't reliably supported in Electron's renderer,

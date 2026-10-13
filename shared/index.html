@@ -405,7 +405,7 @@
               </div>
               <div class="filter-group">
                 <label for="reg-grade">Grade</label>
-                <input id="reg-grade" type="text" />
+                <select id="reg-grade"><option value="">Select grade…</option></select>
               </div>
               <div class="filter-group">
                 <label for="reg-student-id">Student ID</label>
@@ -428,6 +428,10 @@
             <p class="student-summary-contact">Already registered in another sport? Pick them here instead of retyping their details — avoids creating a duplicate entry.</p>
             <form id="add-sport-form" class="fee-form">
               <div class="filter-group">
+                <label for="add-sport-grade">Grade</label>
+                <select id="add-sport-grade"><option value="all">All grades</option></select>
+              </div>
+              <div class="filter-group">
                 <label for="add-sport-student">Student</label>
                 <select id="add-sport-student"><option value="">Pick a student…</option></select>
               </div>
@@ -448,6 +452,10 @@
               <div class="filter-group">
                 <label for="att-sport">Sport</label>
                 <select id="att-sport"></select>
+              </div>
+              <div class="filter-group">
+                <label for="att-grade">Grade</label>
+                <select id="att-grade"><option value="all">All grades</option></select>
               </div>
               <div class="filter-group">
                 <label for="att-month">Month</label>
