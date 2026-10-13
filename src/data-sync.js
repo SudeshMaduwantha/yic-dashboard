@@ -26,13 +26,24 @@ function parseSportSheet(sheet) {
   const monthRow = sheet.getRow(monthRowNum);
   const weekRow = sheet.getRow(weekHeaderRow);
 
-  // Columns C..R (3..18): 4 months x 4 weeks each.
+  // Month blocks start at column C and run as far right as the sheet goes — one
+  // block per month, each as wide as its week labels (1st..4th, or 1st..5th when a
+  // month had a 5th class day). Not a fixed 4-month window, so new months added to
+  // the sheet (September onwards) are picked up without code changes.
   const months = [];
-  for (let block = 0; block < 4; block++) {
-    const colStart = 3 + block * 4;
-    const monthLabel = cleanMonthName(monthRow.getCell(colStart).value);
-    const weekLabels = [0, 1, 2, 3].map((k) => String(weekRow.getCell(colStart + k).value || '').trim());
-    months.push({ name: monthLabel, colStart, weekLabels });
+  const lastCol = Math.max(sheet.columnCount, weekRow.cellCount);
+  let col = 3;
+  while (col <= lastCol) {
+    if (weekOrdinal(weekRow.getCell(col).value) !== '1st') { col++; continue; }
+    const colStart = col;
+    const weekLabels = [];
+    while (col <= lastCol) {
+      const label = weekOrdinal(weekRow.getCell(col).value);
+      if (!label || (label === '1st' && weekLabels.length)) break;
+      weekLabels.push(label);
+      col++;
+    }
+    months.push({ name: cleanMonthName(monthRow.getCell(colStart).value), colStart, weekLabels });
   }
 
   const students = [];
@@ -72,11 +83,22 @@ function findWeekHeaderRow(sheet) {
   return null;
 }
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// "1st", "2nd week", "5th" -> "1st".."5th"; anything else (blank, "Total") -> null.
+function weekOrdinal(raw) {
+  const match = String(raw || '').trim().toLowerCase().match(/^([1-5])(st|nd|rd|th)/);
+  return match ? `${match[1]}${match[2]}` : null;
+}
+
 function cleanMonthName(raw) {
   const text = String(raw || '');
   const match = text.match(/\(([^)]+)\)/);
   const word = (match ? match[1] : text).trim().toLowerCase();
   if (MONTH_FIXES[word]) return MONTH_FIXES[word];
+  // Accept abbreviations/typos like "Sept", "Oct", "Novemebr" by their first 3 letters.
+  const full = MONTH_NAMES.find((m) => word.startsWith(m.slice(0, 3).toLowerCase()));
+  if (full) return full;
   return word ? word[0].toUpperCase() + word.slice(1) : 'Month';
 }
 
