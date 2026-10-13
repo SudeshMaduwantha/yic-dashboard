@@ -21,6 +21,7 @@ async function build() {
 
     fs.copyFileSync(path.join(shared, 'index.html'), path.join(outDir, 'index.html'));
     fs.copyFileSync(path.join(shared, 'styles.css'), path.join(outDir, 'styles.css'));
+    fs.copyFileSync(path.join(shared, 'theme-init.js'), path.join(outDir, 'theme-init.js'));
     fs.cpSync(path.join(shared, 'assets'), path.join(outDir, 'assets'), { recursive: true });
   }
 

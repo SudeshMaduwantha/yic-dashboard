@@ -84,9 +84,24 @@ function switchTab(tabId) {
   const subitem = document.querySelector(`.sidebar-subitem[data-tab="${tabId}"]`);
   if (subitem) {
     subitem.classList.add('active');
-    subitem.closest('.sidebar-section').querySelector('.sidebar-section-btn').classList.add('active');
+    const sectionBtn = subitem.closest('.sidebar-section').querySelector('.sidebar-section-btn');
+    sectionBtn.classList.add('active');
+    // Top bar heading mirrors the sidebar: section above, page name below.
+    el('page-heading-section').textContent = sectionBtn.textContent.trim();
+    el('page-heading-title').textContent = subitem.textContent.trim();
   }
+  el(`tab-${tabId}`).closest('main').scrollTop = 0;
 }
+
+// ---------------- Light / dark theme ----------------
+// theme-init.js applies the saved choice before first paint; this just flips it.
+el('theme-toggle').addEventListener('click', () => {
+  const dark = document.documentElement.dataset.theme !== 'dark';
+  if (dark) document.documentElement.dataset.theme = 'dark';
+  else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem('yic-theme', dark ? 'dark' : 'light'); } catch (e) { /* storage blocked — still switches for this session */ }
+  window.dispatchEvent(new Event('themechange'));
+});
 
 document.querySelectorAll('.sidebar-section-btn').forEach((btn) => {
   btn.addEventListener('click', () => switchTab(SECTIONS[btn.dataset.sectionBtn][0]));

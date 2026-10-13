@@ -18,7 +18,7 @@ let allFees = [];
 let feesLoaded = false; // stays false for roles (coach) that never receive fee data at all
 let allCoaches = [];
 let allStaff = [];
-const filters = { sport: 'all', grade: 'all', month: 'all', search: '' };
+const filters = { sport: 'all', grade: 'all', month: 'all', search: '', level: 'all', sort: 'name' };
 const profileFilters = { sport: 'all', grade: 'all' };
 let detailStudentQuery = null; // set by openStudentDetail() — what "View Attendance" searches for
 // Which of the selected student's own sports the profile's fee table is narrowed
@@ -38,6 +38,10 @@ function syncFilterInputs() {
   el('att-table-filter-month').value = filters.month;
   el('search-input').value = filters.search;
   el('att-table-filter-search').value = filters.search;
+  el('att-level').value = filters.level;
+  el('att-table-filter-level').value = filters.level;
+  el('att-sort').value = filters.sort;
+  el('att-table-filter-sort').value = filters.sort;
   syncSportStripActive();
 }
 
@@ -51,10 +55,20 @@ export function initDashboardUI() {
   el('att-table-filter-grade').addEventListener('change', (e) => { filters.grade = e.target.value; syncFilterInputs(); render(); });
   el('att-table-filter-month').addEventListener('change', (e) => { filters.month = e.target.value; syncFilterInputs(); render(); });
   el('att-table-filter-search').addEventListener('input', (e) => { filters.search = e.target.value.trim().toLowerCase(); syncFilterInputs(); render(); });
+  ['att-level', 'att-table-filter-level'].forEach((id) => el(id).addEventListener('change', (e) => { filters.level = e.target.value; syncFilterInputs(); render(); }));
+  ['att-sort', 'att-table-filter-sort'].forEach((id) => el(id).addEventListener('change', (e) => { filters.sort = e.target.value; syncFilterInputs(); render(); }));
+  el('att-level-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-level]');
+    if (!chip) return;
+    filters.level = chip.dataset.level;
+    syncFilterInputs();
+    render();
+  });
 
   el('student-profile-filter-sport').addEventListener('change', (e) => { profileFilters.sport = e.target.value; renderProfileFilterStudents(); });
   el('student-profile-filter-grade').addEventListener('change', (e) => { profileFilters.grade = e.target.value; renderProfileFilterStudents(); });
   el('student-filter').addEventListener('change', () => { summarySport = 'all'; renderStudentSummary(); });
+  window.addEventListener('themechange', () => { renderChart(); renderIncomeChart(); });
   el('student-manage-save').addEventListener('click', () => saveStudentChanges(false));
   el('student-manage-sync').addEventListener('click', () => saveStudentChanges(true));
   el('student-manage-delete').addEventListener('click', deleteCurrentStudent);
@@ -153,7 +167,7 @@ export function resetDashboardUI() {
   feesLoaded = false;
   allCoaches = [];
   allStaff = [];
-  filters.sport = 'all'; filters.grade = 'all'; filters.month = 'all'; filters.search = '';
+  filters.sport = 'all'; filters.grade = 'all'; filters.month = 'all'; filters.search = ''; filters.level = 'all'; filters.sort = 'name';
   el('export-actions').classList.add('hidden');
   el('staff-panel').classList.add('hidden');
   el('student-summary-panel').classList.add('hidden');
@@ -661,14 +675,61 @@ function syncSelectOptions(selectEl, values, allLabel, labelFn) {
   selectEl.value = values.includes(prev) ? prev : 'all';
 }
 
-function getFlatRoster() {
+// Attendance buckets, over the weeks marked in the selected month (or all months).
+const LEVELS = [
+  { key: 'all', label: 'All', test: () => true },
+  { key: 'perfect', label: 'Perfect 100%', test: (r) => r.total > 0 && r.present === r.total },
+  { key: 'high', label: 'High 75%+', test: (r) => r.total > 0 && r.pct >= 75 },
+  { key: 'mid', label: 'Average 50–74%', test: (r) => r.total > 0 && r.pct >= 50 && r.pct < 75 },
+  { key: 'low', label: 'Low <50%', test: (r) => r.total > 0 && r.pct < 50 },
+  { key: 'never', label: 'Never attended', test: (r) => r.total > 0 && r.present === 0 },
+  { key: 'unmarked', label: 'Not marked', test: (r) => r.total === 0 },
+];
+
+const SORTERS = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  'pct-desc': (a, b) => b.pct - a.pct || b.present - a.present || a.name.localeCompare(b.name),
+  'pct-asc': (a, b) => a.pct - b.pct || a.present - b.present || a.name.localeCompare(b.name),
+  'present-desc': (a, b) => b.present - a.present || b.pct - a.pct || a.name.localeCompare(b.name),
+};
+
+// Everything except the attendance-level filter — the level chips count against this.
+function getBaseRoster() {
   return allStudents
     .filter((s) => filters.sport === 'all' || s.sport === filters.sport)
     .filter((s) => filters.grade === 'all' || String(s.grade) === filters.grade)
     .filter((s) => !filters.search
       || s.name.toLowerCase().includes(filters.search)
       || (s.studentCode || '').toLowerCase().includes(filters.search))
-    .map((s) => ({ ...s, ...presentTotalForMonths(s.months, filters.month) }));
+    .map((s) => {
+      const pt = presentTotalForMonths(s.months, filters.month);
+      return { ...s, ...pt, pct: pt.total ? Math.round((pt.present / pt.total) * 100) : 0 };
+    });
+}
+
+function getFlatRoster() {
+  const level = LEVELS.find((l) => l.key === filters.level) || LEVELS[0];
+  // "Not marked" students have no % at all — keep them at the bottom of a % sort.
+  const sorter = SORTERS[filters.sort] || SORTERS.name;
+  return getBaseRoster().filter(level.test).sort((a, b) => {
+    if (filters.sort !== 'name' && (a.total === 0) !== (b.total === 0)) return a.total === 0 ? 1 : -1;
+    return sorter(a, b);
+  });
+}
+
+function renderLevelChips() {
+  const base = getBaseRoster();
+  el('att-level-chips').innerHTML = LEVELS.map((l) => `
+    <button type="button" class="level-chip level-${l.key}${filters.level === l.key ? ' active' : ''}" data-level="${l.key}">
+      ${escapeHtml(l.label)} <b>${base.filter(l.test).length}</b>
+    </button>
+  `).join('');
+}
+
+function pctCell(r) {
+  if (!r.total) return '<td><span class="pct-pill none">—</span></td>';
+  const band = r.pct >= 75 ? 'high' : r.pct >= 50 ? 'mid' : 'low';
+  return `<td><span class="pct-pill ${band}">${r.pct}%</span></td>`;
 }
 
 function render() {
@@ -695,15 +756,32 @@ function renderStats() {
   ).size;
 
   const stats = [
-    { label: 'Individual students', value: individualStudents },
-    { label: 'Registrations shown', value: roster.length },
-    { label: 'Sports', value: new Set(allStudents.map((s) => s.sport)).size },
-    { label: 'Avg. attendance', value: `${avgAttendance}%` },
-    { label: 'Perfect attendance', value: perfectAttendance },
+    { label: 'Individual students', value: individualStudents, icon: 'users', color: 'var(--primary)' },
+    { label: 'Registrations shown', value: roster.length, icon: 'list', color: '#0ea5e9' },
+    { label: 'Sports', value: new Set(allStudents.map((s) => s.sport)).size, icon: 'trophy', color: 'var(--accent)' },
+    { label: 'Avg. attendance', value: `${avgAttendance}%`, icon: 'chart', color: 'var(--accent-2)' },
+    { label: 'Perfect attendance', value: perfectAttendance, icon: 'star', color: '#8b5cf6' },
   ];
   el('stats-grid').innerHTML = stats.map((s) => `
-    <div class="stat-card"><div class="value">${s.value}</div><div class="label">${s.label}</div></div>
+    <div class="stat-card" style="--stat-color:${s.color}">
+      <div class="value">${s.value}</div><div class="label">${s.label}</div>
+      <div class="stat-icon">${STAT_ICONS[s.icon]}</div>
+    </div>
   `).join('');
+}
+
+const svg = (paths) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+const STAT_ICONS = {
+  users: svg('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
+  list: svg('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'),
+  trophy: svg('<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>'),
+  chart: svg('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>'),
+  star: svg('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>'),
+};
+
+// Chart colours come from the CSS theme tokens so charts follow light/dark mode.
+function themeColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 function renderRoster() {
@@ -742,12 +820,13 @@ function renderAttendanceTable() {
   const head = el('attendance-table-head');
   const body = el('attendance-table-body');
   el('att-table-total-count').textContent = `Total students: ${roster.length}`;
+  renderLevelChips();
 
   if (filters.month === 'all') {
     const months = allMonthKeys(allStudents);
-    head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${months.map((m) => `<th>${escapeHtml(formatMonthLabel(m))}</th>`).join('')}<th>Overall</th></tr>`;
+    head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${months.map((m) => `<th>${escapeHtml(formatMonthLabel(m))}</th>`).join('')}<th>Overall</th><th>%</th></tr>`;
     if (roster.length === 0) {
-      body.innerHTML = `<tr><td colspan="${6 + months.length}" class="empty-state">No students match the current filters.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="${7 + months.length}" class="empty-state">No students match the current filters.</td></tr>`;
       return;
     }
     body.innerHTML = roster.map((r, i) => {
@@ -755,15 +834,15 @@ function renderAttendanceTable() {
         const pt = presentTotalForMonths(r.months, m);
         return `<td>${pt.total ? `${pt.present}/${pt.total}` : '—'}</td>`;
       }).join('');
-      return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td></tr>`;
+      return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td>${pctCell(r)}</tr>`;
     }).join('');
     return;
   }
 
   const weeksToShow = weeksForMonth(roster, filters.month);
-  head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${weeksToShow.map((w) => `<th>${w} Week</th>`).join('')}<th>Present / Total</th></tr>`;
+  head.innerHTML = `<tr><th>No.</th><th>Student ID</th><th>Name</th><th>Grade</th><th>Sport</th>${weeksToShow.map((w) => `<th>${w} Week</th>`).join('')}<th>Present / Total</th><th>%</th></tr>`;
   if (roster.length === 0) {
-    body.innerHTML = `<tr><td colspan="${6 + weeksToShow.length}" class="empty-state">No students match the current filters.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${7 + weeksToShow.length}" class="empty-state">No students match the current filters.</td></tr>`;
     return;
   }
   body.innerHTML = roster.map((r, i) => {
@@ -774,7 +853,7 @@ function renderAttendanceTable() {
       const symbol = v === true ? '✓' : v === false ? '✕' : '–';
       return `<td><span class="mark ${cls}">${symbol}</span></td>`;
     }).join('');
-    return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
+    return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td>${pctCell(r)}</tr>`;
   }).join('');
 }
 
@@ -801,12 +880,13 @@ async function exportAttendanceToExcel() {
         { header: 'Sport', key: 'sport', width: 18 },
         ...months.map((m) => ({ header: formatMonthLabel(m), key: m, width: 12 })),
         { header: 'Overall', key: 'overall', width: 12 },
+        { header: '%', key: 'pct', width: 8 },
       ];
       sheet.getRow(1).font = { bold: true };
       roster.forEach((r, i) => {
         const row = {
           no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade ? gradeLabel(r) : '', sport: r.sport,
-          overall: `${r.present}/${r.total}`,
+          overall: `${r.present}/${r.total}`, pct: r.total ? `${r.pct}%` : '—',
         };
         months.forEach((m) => {
           const pt = presentTotalForMonths(r.months, m);
@@ -824,6 +904,7 @@ async function exportAttendanceToExcel() {
         { header: 'Sport', key: 'sport', width: 18 },
         ...weeksToShow.map((w) => ({ header: `${w} Week`, key: w, width: 10 })),
         { header: 'Present / Total', key: 'overall', width: 14 },
+        { header: '%', key: 'pct', width: 8 },
       ];
       sheet.getRow(1).font = { bold: true };
       roster.forEach((r, i) => {
@@ -831,7 +912,7 @@ async function exportAttendanceToExcel() {
         const symbol = (v) => (v === true ? 'Present' : v === false ? 'Absent' : '—');
         const row = {
           no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade ? gradeLabel(r) : '', sport: r.sport,
-          overall: `${r.present}/${r.total}`,
+          overall: `${r.present}/${r.total}`, pct: r.total ? `${r.pct}%` : '—',
         };
         weeksToShow.forEach((w) => { row[w] = symbol(weeks[w]); });
         sheet.addRow(row);
@@ -873,13 +954,13 @@ function renderChart() {
   if (attendanceChart) attendanceChart.destroy();
   attendanceChart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label: 'Attendance %', data, backgroundColor: '#f5941f', borderRadius: 6 }] },
+    data: { labels, datasets: [{ label: 'Attendance %', data, backgroundColor: themeColor('--chart-bar'), borderRadius: 8, maxBarThickness: 48 }] },
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
       scales: {
-        y: { beginAtZero: true, max: 100, ticks: { color: '#8b93a7' }, grid: { color: '#272c3a' } },
-        x: { ticks: { color: '#8b93a7' }, grid: { display: false } },
+        y: { beginAtZero: true, max: 100, ticks: { color: themeColor('--chart-tick') }, grid: { color: themeColor('--chart-grid') }, border: { display: false } },
+        x: { ticks: { color: themeColor('--chart-tick') }, grid: { display: false }, border: { display: false } },
       },
     },
   });
@@ -902,7 +983,7 @@ function renderIncomeChart() {
   if (incomeChart) incomeChart.destroy();
   incomeChart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label: 'Income (Rs.)', data, backgroundColor: '#22c58b', borderRadius: 6, maxBarThickness: 56 }] },
+    data: { labels, datasets: [{ label: 'Income (Rs.)', data, backgroundColor: themeColor('--chart-bar-2'), borderRadius: 8, maxBarThickness: 56 }] },
     options: {
       responsive: true,
       // This panel is full-width (unlike the paired attendance chart, which sits
@@ -916,10 +997,11 @@ function renderIncomeChart() {
       scales: {
         y: {
           beginAtZero: true,
-          ticks: { color: '#8b93a7', callback: (v) => `Rs. ${Number(v).toLocaleString()}` },
-          grid: { color: '#272c3a' },
+          ticks: { color: themeColor('--chart-tick'), callback: (v) => `Rs. ${Number(v).toLocaleString()}` },
+          grid: { color: themeColor('--chart-grid') },
+          border: { display: false },
         },
-        x: { ticks: { color: '#8b93a7' }, grid: { display: false } },
+        x: { ticks: { color: themeColor('--chart-tick') }, grid: { display: false }, border: { display: false } },
       },
     },
   });
