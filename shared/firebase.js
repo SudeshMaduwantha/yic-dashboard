@@ -97,9 +97,9 @@ export function watchStudents(callback, sportFilter) {
   });
 }
 
-export function addStudent({ name, grade, sport, studentCode, phone }) {
+export function addStudent({ name, grade, className, sport, studentCode, phone }) {
   return addDoc(collection(db, 'students'), {
-    name, grade, sport, studentCode: studentCode || null, phone: phone || null, months: {}, createdAt: serverTimestamp(),
+    name, grade, className: className || null, sport, studentCode: studentCode || null, phone: phone || null, months: {}, createdAt: serverTimestamp(),
   });
 }
 
@@ -110,11 +110,11 @@ export function setStudentCode(docId, studentCode) {
 // Applies a name/grade/ID correction across every sport-registration doc that
 // belongs to the same person (one Firestore doc per name+sport, so a person
 // playing two sports needs the edit applied to both).
-export async function updateStudentInfo(studentIds, { name, grade, studentCode, phone }) {
+export async function updateStudentInfo(studentIds, { name, grade, className, studentCode, phone }) {
   const batch = writeBatch(db);
   studentIds.forEach((id) => {
     batch.update(doc(db, 'students', id), {
-      name, grade: grade || null, studentCode: studentCode || null, phone: phone || null,
+      name, grade: grade || null, className: className || null, studentCode: studentCode || null, phone: phone || null,
     });
   });
   await batch.commit();
@@ -204,16 +204,28 @@ export async function removeStudentSport(studentId) {
   await batch.commit();
 }
 
-export async function importStudent({ name, grade, sport, months }) {
+export async function importStudent({ name, grade, className, sport, months }) {
   // Used by the one-time Excel import: merge into an existing student (same name+sport) or create new.
   const q = query(collection(db, 'students'), where('name', '==', name), where('sport', '==', sport));
   const existing = await getDocs(q);
   if (!existing.empty) {
     const ref = existing.docs[0].ref;
     const current = existing.docs[0].data();
-    return updateDoc(ref, { grade, months: { ...(current.months || {}), ...months } });
+    // Don't wipe a class someone already assigned just because the sheet doesn't have one.
+    return updateDoc(ref, { grade, className: className || current.className || null, months: { ...(current.months || {}), ...months } });
   }
-  return addDoc(collection(db, 'students'), { name, grade, sport, months, createdAt: serverTimestamp() });
+  return addDoc(collection(db, 'students'), { name, grade, className: className || null, sport, months, createdAt: serverTimestamp() });
+}
+
+// Grade/class management: the same field change applied to many student docs at
+// once (every sport-registration of every person affected). Firestore caps a
+// batch at 500 writes, so large grades are split across several batches.
+export async function updateStudentsFields(studentIds, fields) {
+  for (let i = 0; i < studentIds.length; i += 450) {
+    const batch = writeBatch(db);
+    studentIds.slice(i, i + 450).forEach((id) => batch.update(doc(db, 'students', id), fields));
+    await batch.commit();
+  }
 }
 
 // ---------------- Fees ----------------

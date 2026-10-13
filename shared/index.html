@@ -143,6 +143,18 @@
       </form>
     </div>
 
+    <div id="prompt-modal" class="modal-overlay hidden">
+      <form id="prompt-form" class="login-card confirm-card">
+        <h1 id="prompt-title">Enter a value</h1>
+        <p id="prompt-message" class="login-sub"></p>
+        <input id="prompt-input" type="text" autocomplete="off" />
+        <div class="modal-actions">
+          <button type="button" id="prompt-cancel" class="connect-btn">Cancel</button>
+          <button type="submit" id="prompt-ok" class="primary-btn">Save</button>
+        </div>
+      </form>
+    </div>
+
     <div id="confirm-modal" class="modal-overlay hidden">
       <div class="login-card confirm-card">
         <h1 id="confirm-title">Are you sure?</h1>
@@ -192,6 +204,12 @@
             <button type="button" class="sidebar-subitem" data-tab="fees-add">Add Record</button>
             <button type="button" class="sidebar-subitem" data-tab="fees-ledger">Ledger</button>
             <button type="button" class="sidebar-subitem" data-tab="fees-report">Collection Report</button>
+          </div>
+        </div>
+        <div class="sidebar-section" data-section="classes">
+          <button type="button" class="sidebar-section-btn" data-section-btn="classes">Classes</button>
+          <div class="sidebar-subnav">
+            <button type="button" class="sidebar-subitem" data-tab="classes-manage">Grades &amp; Classes</button>
           </div>
         </div>
         <!-- Desktop app only (window.api.updates) — stays hidden on the web build; see ui-updates.js -->
@@ -406,6 +424,11 @@
               <div class="filter-group">
                 <label for="reg-grade">Grade</label>
                 <select id="reg-grade"><option value="">Select grade…</option></select>
+              </div>
+              <div class="filter-group">
+                <label for="reg-class">Class</label>
+                <input id="reg-class" type="text" list="reg-class-options" placeholder="optional, e.g. A" maxlength="3" />
+                <datalist id="reg-class-options"></datalist>
               </div>
               <div class="filter-group">
                 <label for="reg-student-id">Student ID</label>
@@ -684,6 +707,99 @@
         </section>
 
         <!-- ================= UPDATES (desktop app only) ================= -->
+        <!-- ================= CLASSES > GRADES & CLASSES ================= -->
+        <section id="tab-classes-manage" class="tab-panel">
+          <section class="panel hidden" id="grade-cleanup-panel">
+            <h2>Clean Up Grades</h2>
+            <p class="student-summary-contact">The same grade was typed in different ways (e.g. "01", "1", "1 B"). Tick the ones to fix — "1 B" becomes Grade 1, class B. Students and attendance aren't touched, only the grade field.</p>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th><input type="checkbox" id="grade-cleanup-all" checked /></th><th>Currently saved as</th><th>Will become</th><th>Students</th></tr></thead>
+                <tbody id="grade-cleanup-body"></tbody>
+              </table>
+            </div>
+            <div class="att-save-row">
+              <span id="grade-cleanup-status" class="att-status"></span>
+              <button type="button" id="grade-cleanup-apply" class="primary-btn">Apply selected</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header-row">
+              <h2>Grades &amp; Classes</h2>
+            </div>
+            <form id="class-create-form" class="fee-form class-create-form">
+              <div class="filter-group">
+                <label for="class-create-grade">Grade</label>
+                <select id="class-create-grade" required></select>
+              </div>
+              <div class="filter-group">
+                <label for="class-create-name">New class name</label>
+                <input id="class-create-name" type="text" placeholder="e.g. A" maxlength="3" required />
+              </div>
+              <button type="submit" class="primary-btn">Create class</button>
+            </form>
+            <div id="class-grade-grid" class="class-grade-grid"></div>
+            <p id="class-grid-error" class="login-error"></p>
+          </section>
+
+          <section class="panel" id="class-students-panel">
+            <div class="panel-header-row">
+              <h2 id="class-students-title">Students</h2>
+              <div class="class-header-actions">
+                <button type="button" id="class-rename-btn" class="connect-btn">Rename class</button>
+                <button type="button" id="class-delete-btn" class="danger-btn">Delete class</button>
+              </div>
+            </div>
+            <div class="filters">
+              <div class="filter-group">
+                <label for="class-view-grade">Grade</label>
+                <select id="class-view-grade"></select>
+              </div>
+              <div class="filter-group">
+                <label for="class-view-class">Class</label>
+                <select id="class-view-class"></select>
+              </div>
+              <div class="filter-group search-group">
+                <label for="class-view-search">Search</label>
+                <input id="class-view-search" type="text" placeholder="Search student name or ID…" />
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th><input type="checkbox" id="class-select-all" /></th><th>Name</th><th>Student ID</th><th>Grade</th><th>Sport(s)</th></tr></thead>
+                <tbody id="class-students-body"></tbody>
+              </table>
+            </div>
+
+            <div class="class-actions">
+              <div class="fee-form">
+                <div class="filter-group">
+                  <label for="class-move-grade">Move selected to grade</label>
+                  <select id="class-move-grade"></select>
+                </div>
+                <div class="filter-group">
+                  <label for="class-move-class">Class</label>
+                  <input id="class-move-class" type="text" list="class-move-class-options" placeholder="none" maxlength="3" />
+                  <datalist id="class-move-class-options"></datalist>
+                </div>
+                <button type="button" id="class-move-btn" class="primary-btn">Move</button>
+                <button type="button" id="class-remove-btn" class="connect-btn">Remove from class</button>
+              </div>
+              <div class="fee-form">
+                <div class="filter-group">
+                  <label for="class-add-student">Add a student here</label>
+                  <select id="class-add-student"><option value="">Pick a student…</option></select>
+                </div>
+                <button type="button" id="class-add-btn" class="primary-btn">Add</button>
+              </div>
+            </div>
+            <p id="class-students-status" class="login-success"></p>
+            <p id="class-students-error" class="login-error"></p>
+          </section>
+        </section>
+
         <section id="tab-updates-main" class="tab-panel">
           <section class="panel">
             <h2>App Updates</h2>

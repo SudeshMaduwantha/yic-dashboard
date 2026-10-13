@@ -1,4 +1,4 @@
-import { el, escapeHtml, escapeAttr, KNOWN_SPORTS, WEEKS, currentMonthKey } from './utils.js';
+import { el, escapeHtml, escapeAttr, KNOWN_SPORTS, WEEKS, currentMonthKey, sortGrades, gradeLabel } from './utils.js';
 import { addStudent, saveAttendanceBatch } from './firebase.js';
 import { getCurrentRole, isCoach } from './role-state.js';
 
@@ -30,14 +30,21 @@ export function initAttendanceUI() {
       if (!el('reg-phone').value.trim() && existing.phone) el('reg-phone').value = existing.phone;
     }
     const withGrade = allStudents.find((s) => s.name === name && s.grade);
-    if (withGrade && !el('reg-grade').value) el('reg-grade').value = String(withGrade.grade).trim();
+    if (withGrade && !el('reg-grade').value) {
+      el('reg-grade').value = String(withGrade.grade).trim();
+      renderRegClassOptions();
+      if (!el('reg-class').value && withGrade.className) el('reg-class').value = withGrade.className;
+    }
     renderRegSportChecks(name);
   });
+
+  el('reg-grade').addEventListener('change', renderRegClassOptions);
 
   el('reg-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = el('reg-name').value.trim();
     const grade = el('reg-grade').value.trim();
+    const className = el('reg-class').value.trim().toUpperCase();
     const studentCode = el('reg-student-id').value.trim();
     const phone = el('reg-phone').value.trim();
     const sportsToAdd = [...el('reg-sport-checks').querySelectorAll('input:checked:not(:disabled)')].map((c) => c.value);
@@ -46,7 +53,7 @@ export function initAttendanceUI() {
     btn.disabled = true;
     try {
       for (const sport of sportsToAdd) {
-        await addStudent({ name, grade, sport, studentCode, phone });
+        await addStudent({ name, grade, className, sport, studentCode, phone });
       }
       e.target.reset();
       renderRegSportChecks('');
@@ -65,12 +72,12 @@ export function initAttendanceUI() {
     const sportsToAdd = [...el('add-sport-checks').querySelectorAll('input:checked')].map((c) => c.value);
     if (!name || sportsToAdd.length === 0) return;
     const existing = allStudents.find((s) => s.name === name) || {};
-    const { grade, studentCode, phone } = existing;
+    const { grade, className, studentCode, phone } = existing;
     const btn = el('add-sport-submit');
     btn.disabled = true;
     try {
       for (const sport of sportsToAdd) {
-        await addStudent({ name, grade, sport, studentCode, phone });
+        await addStudent({ name, grade, className, sport, studentCode, phone });
       }
       el('add-sport-student').value = '';
       renderAddSportChecks('');
@@ -102,6 +109,7 @@ export function updateAttendanceData(students) {
   regGrade.innerHTML = '<option value="">Select grade…</option>' +
     regGrades.map((g) => `<option value="${escapeAttr(g)}">Grade ${escapeHtml(g)}</option>`).join('');
   regGrade.value = regGrades.includes(prevRegGrade) ? prevRegGrade : '';
+  renderRegClassOptions();
 
   setGradeOptions(el('add-sport-grade'), gradesOf(students));
   renderAddSportStudents();
@@ -114,9 +122,15 @@ function gradesOf(students) {
   return sortGrades(students.map((s) => String(s.grade || '').trim()).filter(Boolean));
 }
 
-// Numeric-aware so "10" sorts after "9", not after "1".
-function sortGrades(grades) {
-  return [...new Set(grades)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+// Class suggestions for the Register form: classes that already exist in the chosen
+// grade. It's a free-text box (with these as suggestions) so a brand-new class can
+// be started just by typing its name.
+function renderRegClassOptions() {
+  const grade = el('reg-grade').value;
+  const classes = sortGrades(allStudents
+    .filter((s) => grade && String(s.grade || '').trim() === grade && s.className)
+    .map((s) => s.className));
+  el('reg-class-options').innerHTML = classes.map((c) => `<option value="${escapeAttr(c)}"></option>`).join('');
 }
 
 function setGradeOptions(select, grades) {
@@ -218,7 +232,7 @@ function renderList({ keepPending = false } = {}) {
     const feePill = feesAvailable ? feeStatusPill(s, monthKey) : '';
     return `
       <div class="att-row" data-id="${escapeAttr(s.id)}">
-        <div class="att-row-name">${escapeHtml(s.name)}<span class="att-row-grade">Grade ${escapeHtml(String(s.grade || '—'))}</span></div>
+        <div class="att-row-name">${escapeHtml(s.name)}<span class="att-row-grade">Grade ${escapeHtml(gradeLabel(s))}</span></div>
         <div class="att-row-right">
           ${feePill}
           <button type="button" class="att-toggle ${state}" data-state="${state}">${labelFor(state)}</button>

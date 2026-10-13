@@ -1,6 +1,6 @@
 import { Chart, BarController, CategoryScale, LinearScale, BarElement } from 'chart.js';
 import ExcelJS from 'exceljs';
-import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, WEEKS, confirmDialog, buildPublicProfileSnapshot } from './utils.js';
+import { el, escapeHtml, escapeAttr, formatMonthLabel, allMonthKeys, presentTotalForMonths, SPORT_LOGOS, KNOWN_SPORTS, ROLE_LABELS, WEEKS, confirmDialog, buildPublicProfileSnapshot, parseGrade, sortGrades, gradeLabel } from './utils.js';
 import { getCurrentRole, isCoach, isSuperAdmin, isAdministrator } from './role-state.js';
 import {
   updateStudentInfo, renameStudentInFees, getStudentMeta, setStudentMeta, syncPublicProfile,
@@ -81,7 +81,7 @@ function closeStudentDetail() {
 function openStudentDetail(name) {
   const registrations = allStudents.filter((s) => s.name === name);
   if (registrations.length === 0) return;
-  const grade = registrations.find((s) => s.grade)?.grade;
+  const gradeReg = registrations.find((s) => s.grade);
   const studentCode = registrations.find((s) => s.studentCode)?.studentCode;
   const phone = registrations.find((s) => s.phone)?.phone;
   // Prefer the unique Student ID over the name so "View Attendance" can't pick
@@ -92,7 +92,7 @@ function openStudentDetail(name) {
   el('student-detail-info').innerHTML = [
     studentCode ? `<div class="student-detail-row"><span class="label">Student ID</span> ${escapeHtml(studentCode)}</div>` : '',
     phone ? `<div class="student-detail-row"><span class="label">Mobile</span> ${escapeHtml(phone)}</div>` : '',
-    grade ? `<div class="student-detail-row"><span class="label">Grade</span> ${escapeHtml(String(grade))}</div>` : '',
+    gradeReg ? `<div class="student-detail-row"><span class="label">Grade</span> ${escapeHtml(gradeLabel(gradeReg))}</div>` : '',
   ].filter(Boolean).join('') || '<div class="empty-state">No extra details on file.</div>';
 
   el('student-detail-sports').innerHTML = registrations.map((s) => {
@@ -231,6 +231,7 @@ function renderDuplicateStudents() {
         const keeperUpdates = {
           months: mergedMonths,
           grade: keeper.grade || duplicates.find((d) => d.grade)?.grade || null,
+          className: keeper.className || duplicates.find((d) => d.className)?.className || null,
           studentCode: keeper.studentCode || duplicates.find((d) => d.studentCode)?.studentCode || null,
           phone: keeper.phone || duplicates.find((d) => d.phone)?.phone || null,
         };
@@ -357,7 +358,7 @@ function renderCoachesPanel() {
 
 function populateFilterOptions() {
   const sports = [...new Set(allStudents.map((s) => s.sport))].sort();
-  const grades = [...new Set(allStudents.map((s) => s.grade).filter(Boolean))].sort();
+  const grades = sortGrades(allStudents.map((s) => s.grade).filter(Boolean));
   const months = allMonthKeys(allStudents);
 
   syncSelectOptions(el('sport-filter'), sports, 'All sports', (s) => s);
@@ -404,10 +405,10 @@ function renderStudentSummary() {
   panel.classList.remove('hidden');
 
   const registrations = allStudents.filter((s) => s.name === name);
-  const grade = registrations.find((s) => s.grade)?.grade;
+  const gradeReg = registrations.find((s) => s.grade);
   const studentCode = registrations.find((s) => s.studentCode)?.studentCode || '';
   const phone = registrations.find((s) => s.phone)?.phone || '';
-  el('student-summary-title').textContent = `${name}${grade ? ` · Grade ${grade}` : ''}${studentCode ? ` · ${studentCode}` : ''}`;
+  el('student-summary-title').textContent = `${name}${gradeReg ? ` · Grade ${gradeLabel(gradeReg)}` : ''}${studentCode ? ` · ${studentCode}` : ''}`;
   el('student-summary-contact').innerHTML = phone
     ? `<svg class="btn-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg> ${escapeHtml(phone)}`
     : '';
@@ -471,7 +472,7 @@ function renderStudentSummary() {
   manageSection.classList.toggle('hidden', !canManageStudents());
   if (canManageStudents()) {
     el('student-manage-name').value = name;
-    el('student-manage-grade').value = grade || '';
+    el('student-manage-grade').value = gradeReg ? gradeLabel(gradeReg) : '';
     el('student-manage-phone').value = phone;
     el('student-manage-id').value = studentCode;
     el('student-manage-pin').value = '';
@@ -530,7 +531,7 @@ async function saveStudentChanges(alsoSync) {
   const originalName = el('student-filter').value;
   if (!originalName) return;
   const newName = el('student-manage-name').value.trim();
-  const newGrade = el('student-manage-grade').value.trim();
+  const { grade: newGrade, className: newClass } = parseGrade(el('student-manage-grade').value);
   const newPhone = el('student-manage-phone').value.trim();
   const code = el('student-manage-id').value.trim();
   const pin = el('student-manage-pin').value.trim();
@@ -548,13 +549,13 @@ async function saveStudentChanges(alsoSync) {
   syncBtn.disabled = true;
   try {
     const ids = registrations.map((s) => s.id);
-    await updateStudentInfo(ids, { name: newName, grade: newGrade, studentCode: code, phone: newPhone });
+    await updateStudentInfo(ids, { name: newName, grade: newGrade, className: newClass, studentCode: code, phone: newPhone });
     if (newName !== originalName) await renameStudentInFees(ids, newName);
     if (pin) await setStudentMeta(code, { pin, name: newName });
 
     // Reflect the change immediately rather than waiting on the next snapshot round-trip.
     registrations.forEach((s) => {
-      s.name = newName; s.grade = newGrade || null; s.studentCode = code || null; s.phone = newPhone || null;
+      s.name = newName; s.grade = newGrade || null; s.className = newClass || null; s.studentCode = code || null; s.phone = newPhone || null;
     });
     if (newName !== originalName) {
       const sel = el('student-filter');
@@ -717,7 +718,7 @@ function renderRoster() {
     return `
       <div class="roster-card" data-name="${escapeAttr(r.name)}">
         <div class="name">${escapeHtml(r.name)}${r.studentCode ? ` <span class="student-code-tag">${escapeHtml(r.studentCode)}</span>` : ''}</div>
-        <div class="meta">Grade ${escapeHtml(String(r.grade || '—'))} · ${escapeHtml(r.sport)}</div>
+        <div class="meta">Grade ${escapeHtml(gradeLabel(r))} · ${escapeHtml(r.sport)}</div>
         <div class="bar-bg"><div class="bar-fill" style="width:${pct}%"></div></div>
         <div class="pct">${r.present}/${r.total} weeks · ${pct}%</div>
       </div>
@@ -754,7 +755,7 @@ function renderAttendanceTable() {
         const pt = presentTotalForMonths(r.months, m);
         return `<td>${pt.total ? `${pt.present}/${pt.total}` : '—'}</td>`;
       }).join('');
-      return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td></tr>`;
+      return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${cells}<td>${r.present}/${r.total}</td></tr>`;
     }).join('');
     return;
   }
@@ -773,7 +774,7 @@ function renderAttendanceTable() {
       const symbol = v === true ? '✓' : v === false ? '✕' : '–';
       return `<td><span class="mark ${cls}">${symbol}</span></td>`;
     }).join('');
-    return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(String(r.grade || '—'))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
+    return `<tr><td>${i + 1}</td><td>${escapeHtml(r.studentCode || '—')}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(gradeLabel(r))}</td><td>${escapeHtml(r.sport)}</td>${weekCells}<td>${r.present}/${r.total}</td></tr>`;
   }).join('');
 }
 
@@ -804,7 +805,7 @@ async function exportAttendanceToExcel() {
       sheet.getRow(1).font = { bold: true };
       roster.forEach((r, i) => {
         const row = {
-          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade || '', sport: r.sport,
+          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade ? gradeLabel(r) : '', sport: r.sport,
           overall: `${r.present}/${r.total}`,
         };
         months.forEach((m) => {
@@ -829,7 +830,7 @@ async function exportAttendanceToExcel() {
         const weeks = (r.months || {})[filters.month] || {};
         const symbol = (v) => (v === true ? 'Present' : v === false ? 'Absent' : '—');
         const row = {
-          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade || '', sport: r.sport,
+          no: i + 1, studentCode: r.studentCode || '', name: r.name, grade: r.grade ? gradeLabel(r) : '', sport: r.sport,
           overall: `${r.present}/${r.total}`,
         };
         weeksToShow.forEach((w) => { row[w] = symbol(weeks[w]); });

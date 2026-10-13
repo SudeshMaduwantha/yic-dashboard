@@ -1,10 +1,11 @@
-import { el, ROLE_LABELS, confirmDialog } from './utils.js';
+import { el, ROLE_LABELS, confirmDialog, parseGrade } from './utils.js';
 import { watchStudents, watchFees, watchSportCoaches, watchSportFees, watchStaff, importStudent } from './firebase.js';
 import { initLoginUI } from './ui-login.js';
 import { initDashboardUI, updateDashboardData, updateDashboardFees, updateCoaches, updateStaffList, resetDashboardUI } from './ui-dashboard.js';
 import { initAttendanceUI, updateAttendanceData, updateAttendanceFees } from './ui-attendance.js';
 import { initFeesUI, updateFeesStudentData, updateFeesData, updateSportFees } from './ui-fees.js';
 import { initUpdatesUI } from './ui-updates.js';
+import { initClassesUI, updateClassesData } from './ui-classes.js';
 import { makeSearchable } from './searchable-select.js';
 
 let unsubStudents = null;
@@ -71,6 +72,7 @@ const SECTIONS = {
   dashboard: ['dashboard-overview', 'dashboard-attendance-table', 'dashboard-student-profile', 'dashboard-staff-coaches'],
   attendance: ['attendance-register', 'attendance-mark'],
   fees: ['fees-add', 'fees-ledger', 'fees-report'],
+  classes: ['classes-manage'],
   updates: ['updates-main'],
 };
 
@@ -95,8 +97,8 @@ document.querySelectorAll('.sidebar-subitem').forEach((btn) => {
 
 // Sections each role is allowed to see. Super Admin sees everything.
 const TAB_ACCESS = {
-  super_admin: ['dashboard', 'attendance', 'fees'],
-  administrator: ['dashboard', 'fees'],
+  super_admin: ['dashboard', 'attendance', 'fees', 'classes'],
+  administrator: ['dashboard', 'fees', 'classes'],
   coach: ['dashboard', 'attendance'],
 };
 
@@ -135,6 +137,7 @@ initLoginUI({
       updateDashboardData(students);
       updateAttendanceData(students);
       updateFeesStudentData(students);
+      updateClassesData(students);
     }, sportScope);
     if (role.role === 'super_admin' || role.role === 'administrator') {
       unsubFees = watchFees((fees) => { updateFeesData(fees); updateDashboardFees(fees); updateAttendanceFees(fees); });
@@ -170,8 +173,9 @@ initDashboardUI();
 initAttendanceUI();
 initFeesUI();
 initUpdatesUI();
+initClassesUI();
 // Long student pickers: type to search instead of scrolling the whole list.
-['student-filter', 'add-sport-student', 'fee-student'].forEach((id) => makeSearchable(el(id)));
+['student-filter', 'add-sport-student', 'fee-student', 'class-add-student'].forEach((id) => makeSearchable(el(id)));
 
 // ---------------- Desktop-only: one-time Excel import ----------------
 // Note: window.prompt()/alert() aren't reliably supported in Electron's renderer,
@@ -235,7 +239,8 @@ if (isElectron) {
             m.weeks.forEach((w) => { if (w.marked) weeks[w.label] = w.present; });
             if (Object.keys(weeks).length) months[key] = weeks;
           });
-          await importStudent({ name: s.name, grade: s.grade, sport, months });
+          const { grade, className } = parseGrade(s.grade);
+          await importStudent({ name: s.name, grade, className, sport, months });
           count++;
         } catch (err) {
           console.error('Import failed for', s.name, sport, err);

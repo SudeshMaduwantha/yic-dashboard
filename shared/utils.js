@@ -114,6 +114,58 @@ export function buildPublicProfileSnapshot(name, allStudents, allFees) {
   return { grade, sports, feeRecords };
 }
 
+// Splits a free-typed grade into grade + class: "01" -> 1, "1 B" -> 1/B, "4+A" -> 4/A,
+// "Grade 7" -> 7. Anything that doesn't look like a number + optional letter(s)
+// is kept as-is (no class) rather than guessed at.
+export function parseGrade(raw) {
+  const text = String(raw ?? '').trim();
+  const match = text.match(/^(?:grade\s*)?0*(\d{1,2})\s*[+\-/.]?\s*([A-Za-z]{1,2})?$/i);
+  if (!match) return { grade: text, className: '' };
+  return { grade: match[1], className: (match[2] || '').toUpperCase() };
+}
+
+// Numeric-aware so "10" sorts after "9", not after "1".
+export function sortGrades(grades) {
+  return [...new Set(grades.map((g) => String(g)))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+// What a table cell shows for a student's grade: "4", or "4 B" once they're in a class.
+export function gradeLabel(s) {
+  if (!s.grade) return '—';
+  return s.className ? `${s.grade} ${s.className}` : String(s.grade);
+}
+
+// Themed one-field text prompt (window.prompt() isn't supported in Electron's renderer).
+// Resolves to the trimmed text, or null if cancelled.
+export function promptDialog(message, { title = 'Enter a value', okLabel = 'Save', value = '' } = {}) {
+  return new Promise((resolve) => {
+    const modal = el('prompt-modal');
+    const form = el('prompt-form');
+    const input = el('prompt-input');
+    el('prompt-title').textContent = title;
+    el('prompt-message').textContent = message;
+    el('prompt-ok').textContent = okLabel;
+    input.value = value;
+    modal.classList.remove('hidden');
+    input.focus();
+    input.select();
+
+    const cleanup = (result) => {
+      modal.classList.add('hidden');
+      form.removeEventListener('submit', onSubmit);
+      el('prompt-cancel').removeEventListener('click', onCancel);
+      modal.removeEventListener('click', onOverlay);
+      resolve(result);
+    };
+    const onSubmit = (e) => { e.preventDefault(); cleanup(input.value.trim()); };
+    const onCancel = () => cleanup(null);
+    const onOverlay = (e) => { if (e.target === modal) cleanup(null); };
+    form.addEventListener('submit', onSubmit);
+    el('prompt-cancel').addEventListener('click', onCancel);
+    modal.addEventListener('click', onOverlay);
+  });
+}
+
 export function allMonthKeys(students) {
   const keys = new Set();
   students.forEach((s) => Object.keys(s.months || {}).forEach((k) => keys.add(k)));
