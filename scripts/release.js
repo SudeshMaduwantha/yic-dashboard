@@ -29,11 +29,19 @@ if (!token) {
   process.exit(1);
 }
 
+const { version } = require(path.join(__dirname, '..', 'package.json'));
+const tag = `v${version}`;
+
+// electron-builder uploads the .exe and .blockmap in parallel, and when no
+// release exists yet each upload creates its own draft — the .exe ends up in a
+// stray draft instead of the release that goes live. Creating the draft up
+// front means every upload lands in this one.
+const exists = spawnSync('gh', ['release', 'view', tag], { shell: true, stdio: 'ignore', env: { ...process.env, GH_TOKEN: token } }).status === 0;
+if (!exists) run('gh', ['release', 'create', tag, '--draft', '--title', version, '--notes', '""'], { GH_TOKEN: token });
+
 run('node', ['scripts/build.js']);
 run('npx', ['electron-builder', '--publish', 'always'], { GH_TOKEN: token });
 
-const { version } = require(path.join(__dirname, '..', 'package.json'));
-const tag = `v${version}`;
 console.log(`Publishing ${tag} (un-drafting)...`);
 run('gh', ['release', 'edit', tag, '--draft=false']);
 console.log(`${tag} is now live.`);
